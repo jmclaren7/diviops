@@ -70,6 +70,32 @@ backup and persisted-content readback. Custom HTML does not grant script
 permissions or authorize external activity. Visual QA is separate from write
 acceptance: perform it when authorized, and disclose when it was not performed.
 
+"Native" here means Visual Builder modules as opposed to raw HTML — core Divi
+modules and installed add-on modules both qualify.
+
+### Add-on modules
+
+Sites may have third-party Divi 5 module plugins installed (Divi Supreme Pro,
+Divi Torque, Squad Modules, …). `diviops_schema_list_modules` returns them next
+to core modules, marked `source: "addon"` with their `namespace`.
+
+- **Neutral choice.** Core and add-on modules are equal candidates. Pick
+  whichever module best fits the requirement; neither is preferred by default.
+  Where this skill names a specific core module (e.g. `divi/number-counter`),
+  that is a known-good option, not a requirement.
+- **Check what's available.** Run `diviops_schema_list_modules` once per site
+  before planning a page so the choice covers every installed module.
+- **Read the schema first.** This skill's reference files document core
+  modules only. Before authoring an add-on module, read its attributes with
+  `diviops_schema_get_module` (full name like `dsm/flipbox`, or the bare name
+  when unambiguous — a `conflict` error lists the candidates). If a page on the
+  site already uses the module, read that page's block markup as a working
+  example. Treat attribute paths derived this way as `<!-- UNVERIFIED -->`
+  until a VB round-trip confirms them (see Verification convention below).
+- **Report what was used.** List the add-on modules a page uses in your summary.
+  The page depends on those plugins staying active; `diviops_validate_blocks`
+  warns `unregistered_addon_module` when one is missing.
+
 ### Verification convention
 
 Skill docs label findings by evidence quality. **Runtime acceptance ≠ VB compatibility** — a path can render correctly via MCP write but get rewritten or rejected on VB save. When citing or extending these docs, preserve the existing tier:
