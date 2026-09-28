@@ -1,11 +1,10 @@
 {
-  "name": "diviops",
+  "name": "jcs-diviops",
   "metadata": {
-    "description": "DiviOps — AI agent tools and skills for building Divi 5 WordPress pages with Claude Code"
+    "description": "DiviOps fork (jmclaren7/diviops) — AI agent tools and skills for building Divi 5 WordPress pages with Claude Code"
   },
   "owner": {
-    "name": "oaris-dev",
-    "email": "hallo@oaris.de"
+    "name": "jmclaren7"
   },
   "plugins": [
     {
