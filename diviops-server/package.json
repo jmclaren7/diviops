@@ -50,13 +50,13 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/oaris-dev/diviops.git",
+    "url": "git+https://github.com/jmclaren7/diviops.git",
     "directory": "diviops-server"
   },
   "bugs": {
-    "url": "https://github.com/oaris-dev/diviops/issues"
+    "url": "https://github.com/jmclaren7/diviops/issues"
   },
-  "homepage": "https://github.com/oaris-dev/diviops/tree/main/diviops-server#readme",
+  "homepage": "https://github.com/jmclaren7/diviops/tree/main/diviops-server#readme",
   "engines": {
     "node": ">=22.0.0"
   },
