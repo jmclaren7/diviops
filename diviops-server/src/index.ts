@@ -1140,7 +1140,7 @@ registerPluginTool(
         .string()
         .optional()
         .describe(
-          'Module name, e.g. "text", "image", "accordion", full "divi/text", or a registered extension such as "difl/faq". Required when mode="single"; ignored when mode="dump_all".',
+          'Module name, e.g. "text", "image", "accordion", full "divi/text", or a registered extension such as "difl/faq". Third-party add-on modules take their full name from diviops_schema_list_modules (e.g. "dsm/flipbox"); a bare add-on name also works when it doesn\'t collide with a core module. Required when mode="single"; ignored when mode="dump_all".',
         ),
       raw: z
         .boolean()
