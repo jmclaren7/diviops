@@ -150,12 +150,14 @@ claude plugin marketplace add /absolute/path/to/diviops
 claude plugin install divi-5-builder@diviops
 ```
 
-**This fork (`jmclaren7/diviops`)** also ships the MCP server inside the plugin, so it runs the fork's server fixes rather than the npm release. Install from the fork, set `WP_URL`, `WP_USER` and `WP_APP_PASSWORD` in the environment, and drop any separate `diviops` entry from `.mcp.json` so the tools aren't registered twice:
+**This fork (`jmclaren7/diviops`)** stands alone from upstream. Its marketplace is named `jcs-diviops`, so it can sit next to an upstream `diviops` marketplace without clashing. The plugin also ships the MCP server, so it runs the fork's server fixes rather than the npm release. Install from the fork, set `WP_URL`, `WP_USER` and `WP_APP_PASSWORD` in the environment, and drop any separate `diviops` entry from `.mcp.json` so the tools aren't registered twice:
 
 ```bash
 claude plugin marketplace add jmclaren7/diviops
-claude plugin install divi-5-builder@diviops
+claude plugin install divi-5-builder@jcs-diviops
 ```
+
+If upstream's `divi-5-builder@diviops` is also installed, uninstall it (`claude plugin uninstall divi-5-builder@diviops`) so the skills and tools aren't loaded twice. Both WordPress plugins in this fork set `Update URI: false`, so WordPress.org releases never replace them. Update them by uploading the fork's builds.
 
 The plugin runs `diviops-server/bundle/diviops-mcp.mjs`, a self-contained build with no `npm install` step. After changing anything under `diviops-server/src/`, rebuild and commit it with `cd diviops-server && npm run bundle`, and bump `version` in `.claude-plugin/plugin.json` so installed copies update.
 
