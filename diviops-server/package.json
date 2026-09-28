@@ -31,6 +31,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "bundle": "npx --yes esbuild@0.28.2 src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=bundle/diviops-mcp.mjs --legal-comments=eof --banner:js=\"import { createRequire as __diviopsCreateRequire } from 'module'; const require = __diviopsCreateRequire(import.meta.url);\"",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "test": "npm run build && node --test dist/__tests__/*.test.js dist/preset-cli/__tests__/*.test.js dist/cross-env-preflight/__tests__/*.test.js scripts/authoring-release-boundary.test.mjs && node scripts/check-release-boundary.mjs",
