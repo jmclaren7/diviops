@@ -184,6 +184,27 @@ The plugin advertises 98 capability keys through the handshake (full MCP endpoin
 - **Site auditing** — preset audits, design-token usage scans, orphan detection (presets, variables, dangling references)
 - **Hybrid site harmonization** — design token APIs (`variable_*`, `global_color_*`, `global_font_*`) for cross-surface design system management between Divi pages and custom PHP templates
 
+### Add-on module discovery
+
+Module schema introspection (`/schema/modules`, `/schema/module/<name>`) covers core `divi/*` modules and third-party Divi 5 add-on modules. A registered block counts as an add-on module when its namespace is on the allowlist or it declares a Divi module category (`module`, `child-module`, `fullwidth-module`).
+
+The allowlist ships with namespaces for common add-ons (Divi Supreme, Divi Torque, Squad Modules, Divi Pixel, DiviFlash, Divi Plus and others). Extend it in `wp-config.php`:
+
+```php
+define( 'DIVIOPS_AGENT_MODULE_NAMESPACES', 'myvendor,othervendor' );
+```
+
+or with a filter:
+
+```php
+add_filter( 'diviops_agent_module_namespaces', function ( $namespaces ) {
+	$namespaces[] = 'myvendor';
+	return $namespaces;
+} );
+```
+
+Disable category-based detection with `add_filter( 'diviops_agent_detect_modules_by_category', '__return_false' );`.
+
 ## Authentication & permissions
 
 All endpoints require Application Password authentication (Basic Auth). Three permission tiers:

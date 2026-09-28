@@ -17,7 +17,93 @@ if ( ! defined( 'ABSPATH' ) ) {
 trait DiviOps_Agent_ModuleSchema {
 
 	/**
-	 * List all registered Divi modules with basic info.
+	 * Block namespaces of third-party Divi 5 module plugins.
+	 *
+	 * Add-ons register their modules under their own namespace, never
+	 * `divi/`. Namespaces marked verified were read from the plugin's
+	 * module.json files; the rest follow the vendor's Divi 4 prefix and
+	 * are best guesses. A namespace that isn't registered on the site
+	 * simply matches nothing. Category detection
+	 * (see is_divi_module_block()) catches add-ons missing from this list.
+	 *
+	 * Extend via the `DIVIOPS_AGENT_MODULE_NAMESPACES` constant
+	 * (comma-separated) or the `diviops_agent_module_namespaces` filter.
+	 */
+	private static function addon_module_namespaces() {
+		static $namespaces = null;
+		if ( null !== $namespaces ) {
+			return $namespaces;
+		}
+
+		$defaults = [
+			'divitorque',               // Divi Torque (verified)
+			'squad-modules',            // Squad Modules (verified)
+			'dcf',                      // Divi Carousel Maker / Wow Carousel (verified)
+			'inftnc',                   // Infinity TNC Divi Modules (verified)
+			'd5-wpt-ultimate-carousel', // Ultimate Carousel for Divi (verified)
+			'cf7-mate',                 // CF7 Styler / CF7 Mate (verified)
+			'dsm',                      // Divi Supreme Pro / Lite
+			'dipi',                     // Divi Pixel
+			'difl',                     // DiviFlash
+			'dipl',                     // Divi Plus
+			'dnxte',                    // Divi Essential (Divi Next)
+		];
+
+		if ( defined( 'DIVIOPS_AGENT_MODULE_NAMESPACES' ) && is_string( DIVIOPS_AGENT_MODULE_NAMESPACES ) ) {
+			$defaults = array_merge( $defaults, explode( ',', DIVIOPS_AGENT_MODULE_NAMESPACES ) );
+		}
+
+		$filtered = apply_filters( 'diviops_agent_module_namespaces', $defaults );
+		if ( ! is_array( $filtered ) ) {
+			$filtered = $defaults;
+		}
+
+		$namespaces = [];
+		foreach ( $filtered as $namespace ) {
+			$namespace = trim( strtolower( (string) $namespace ), " \t\n\r\0\x0B/" );
+			if ( '' !== $namespace && 'divi' !== $namespace && preg_match( '/^[a-z0-9-]+$/', $namespace ) ) {
+				$namespaces[ $namespace ] = true;
+			}
+		}
+		$namespaces = array_keys( $namespaces );
+
+		return $namespaces;
+	}
+
+	/**
+	 * Whether a registered block is a Divi module: core `divi/*`, an
+	 * allowlisted add-on namespace, or (unless disabled via the
+	 * `diviops_agent_detect_modules_by_category` filter) a block using
+	 * one of Divi 5's module categories, which every Divi 5 module
+	 * declares in its module.json.
+	 */
+	private static function is_divi_module_block( $name, $block_type ) {
+		if ( 0 === strpos( $name, 'divi/' ) ) {
+			return true;
+		}
+		if ( in_array( self::block_namespace( $name ), self::addon_module_namespaces(), true ) ) {
+			return true;
+		}
+		if ( ! apply_filters( 'diviops_agent_detect_modules_by_category', true ) ) {
+			return false;
+		}
+		$category = $block_type->category ?? '';
+		return in_array( $category, [ 'module', 'child-module', 'fullwidth-module' ], true );
+	}
+
+	/**
+	 * Namespace part of a block name (`dsm/flipbox` → `dsm`).
+	 */
+	private static function block_namespace( $name ) {
+		$slash = strpos( $name, '/' );
+		return false === $slash ? '' : substr( $name, 0, $slash );
+	}
+
+	/**
+	 * List all registered Divi modules with basic info — core `divi/*`
+	 * modules plus third-party add-on modules. Each entry carries
+	 * `source` (`divi` | `addon`) and `namespace` so callers can tell
+	 * them apart.
 	 *
 	 * Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.
 	 */
@@ -27,16 +113,19 @@ trait DiviOps_Agent_ModuleSchema {
 		$modules  = [];
 
 		foreach ( $all as $name => $block_type ) {
-			if ( 0 !== strpos( $name, 'divi/' ) ) {
+			if ( ! self::is_divi_module_block( $name, $block_type ) ) {
 				continue;
 			}
 
+			$namespace = self::block_namespace( $name );
 			$modules[] = [
 				'name'        => $name,
 				'title'       => $block_type->title ?? $name,
 				'category'    => $block_type->category ?? '',
 				'description' => $block_type->description ?? '',
 				'supports'    => $block_type->supports ?? [],
+				'namespace'   => $namespace,
+				'source'      => 'divi' === $namespace ? 'divi' : 'addon',
 			];
 		}
 
@@ -48,6 +137,8 @@ trait DiviOps_Agent_ModuleSchema {
 	 *
 	 * Build-time call for the skill regen pipeline. Walks the
 	 * block-type registry once and returns each `divi/*` block's
+	 * (core modules only — add-on modules are not part of the
+	 * canonical attr-path index, so they stay out of the snapshot)
 	 * full attributes alongside a `schema_version` hash so consumers
 	 * can short-circuit when nothing changed.
 	 *
@@ -198,27 +289,62 @@ trait DiviOps_Agent_ModuleSchema {
 	/**
 	 * Get full schema/attributes for a specific module.
 	 *
+	 * Accepts a full block name (`divi/text`, `dsm/flipbox`) or a bare
+	 * module name. A bare name resolves to `divi/<name>` first, then to
+	 * the single add-on module with that name. Bare names matter for
+	 * add-ons: the MCP server URL-encodes the slash in `dsm/flipbox`,
+	 * which some web servers (Apache's default AllowEncodedSlashes Off)
+	 * reject before WordPress sees the request.
+	 *
 	 * Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.
 	 * Errors:
-	 *  - not_found (HTTP 404): the module name does not resolve in the
-	 *    Divi block-type registry. Hint suggests `diviops_schema_list_modules`.
+	 *  - not_found (HTTP 404): the module name does not resolve to a
+	 *    registered Divi or add-on module. Hint suggests
+	 *    `diviops_schema_list_modules`.
+	 *  - conflict (HTTP 409): a bare name matches more than one add-on
+	 *    module. `error.data.candidates` lists the full names.
 	 */
 	public static function schema_get_module( $request ) {
-		$name = sanitize_text_field( (string) $request['name'] );
-
-		// Normalize: accept "text" or "divi/text".
-		if ( 0 !== strpos( $name, 'divi/' ) ) {
-			$name = 'divi/' . $name;
-		}
-
+		$name       = trim( sanitize_text_field( (string) $request['name'] ) );
 		$registry   = WP_Block_Type_Registry::get_instance();
-		$block_type = $registry->get_registered( $name );
+		$block_type = null;
+
+		if ( false !== strpos( $name, '/' ) ) {
+			$candidate = $registry->get_registered( $name );
+			if ( $candidate && self::is_divi_module_block( $name, $candidate ) ) {
+				$block_type = $candidate;
+			}
+		} else {
+			$block_type = $registry->get_registered( 'divi/' . $name );
+
+			if ( ! $block_type ) {
+				$matches = [];
+				foreach ( $registry->get_all_registered() as $full_name => $candidate ) {
+					if ( substr( $full_name, strpos( $full_name, '/' ) + 1 ) === $name
+						&& self::is_divi_module_block( $full_name, $candidate ) ) {
+						$matches[ $full_name ] = $candidate;
+					}
+				}
+
+				if ( count( $matches ) > 1 ) {
+					return self::envelope_error(
+						'conflict',
+						"Module name '{$name}' is ambiguous",
+						'Pass the full block name (namespace/name) from error.data.candidates.',
+						409,
+						[ 'candidates' => array_keys( $matches ) ]
+					);
+				}
+
+				$block_type = $matches ? reset( $matches ) : null;
+			}
+		}
 
 		if ( ! $block_type ) {
 			return self::envelope_error(
 				'not_found',
 				"Module '{$name}' not found",
-				'Run diviops_schema_list_modules to see registered Divi modules.',
+				'Run diviops_schema_list_modules to see registered Divi and add-on modules.',
 				404
 			);
 		}

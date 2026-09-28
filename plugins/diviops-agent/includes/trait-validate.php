@@ -103,6 +103,20 @@ trait DiviOps_Agent_Validate {
 
 			$is_divi_block = 0 === strpos( $name, 'divi/' ) && 'divi/placeholder' !== $name;
 
+			// Add-on module whose plugin isn't active — renders as nothing.
+			// Warning, not error: existing pages may legitimately carry
+			// blocks from a deactivated add-on.
+			if ( ! $is_divi_block
+				&& in_array( self::block_namespace( $name ), self::addon_module_namespaces(), true )
+				&& ! $registry->get_registered( $name ) ) {
+				$warnings[] = [
+					'block'   => $name,
+					'index'   => $index,
+					'code'    => 'unregistered_addon_module',
+					'message' => "Add-on module '{$name}' is not registered — its plugin may be inactive. It will not render.",
+				];
+			}
+
 			// ── Structural checks (errors) ─────────────────────────
 
 			if ( $is_divi_block ) {
