@@ -127,6 +127,14 @@ For supported guarded writes, `backup: true` stores recovery state server-side w
 
 ## Write Tools (30)
 
+### Retain a reviewed full-page candidate
+
+On servers exposing `retain_content` and `content_ref` in `diviops_page_update_content`, send the full `content` once with `dry_run:true`, `retain_content:true`, the target `page_id`, its current `expected_checksum`, and the intended `backup` choice. Review the returned plan before applying. A successful retained dry-run adds `data.content_ref`, `content_checksum` (SHA-256 of retained submitted UTF-8 content, not a persisted-page checksum), and `expires_at`.
+
+Apply with `content_ref` instead of `content`, repeating the same page ID, expected checksum and backup choice with `dry_run:false`. The reference is not approval or a backup: existing capability, permission, normalization, validation, checksum and backup checks still run. Inspect actual apply/readback and backup evidence. Prefer targeted module/section edits when a full rewrite is unnecessary.
+
+References are memory-only and MCP-process-local, expire after five minutes from reservation, and are limited to eight candidates, 2 MiB each and 8 MiB total. A restart loses them. They are consumed before apply checks/dispatch, including failed or uncertain applies; do not automatically retry. Unknown, expired, mismatched or consumed references refuse. A new attempt requires fresh target inspection and a newly reviewed dry-run. Do not pass both content and a reference, change backup intent, or reuse references on another page/process. Direct-content calls remain available and unchanged; this reduces repeated agent payloads, not the content sent from MCP to WordPress. No disk upload service, cross-client session-isolation guarantee or installed-site qualification is implied.
+
 - `diviops_preset_registry_doctor` — audit canonical D5 preset timestamps and chunk transients; guarded repair converts only parseable ISO timestamps after backup, with dry-run support
 
 - `diviops_page_create` — create new page with Divi content

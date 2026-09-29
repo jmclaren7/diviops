@@ -1441,8 +1441,15 @@ trait DiviOps_Agent_Preset {
 	 * Delete a specific preset by ID.
 	 */
 	public static function preset_delete( $request ) {
+		if ( $request->has_param( 'preset_ids' ) ) {
+			return self::preset_delete_exact( $request );
+		}
+		if ( $request->has_param( 'expected_registry_checksum' ) || ! is_string( $request->get_param( 'preset_id' ) ) || '' === trim( $request->get_param( 'preset_id' ) ) ) {
+			return self::envelope_error( 'invalid_input', 'Supply preset_id, or preset_ids for checksum-bound exact-set deletion.', '', 400 );
+		}
 		$preset_id = sanitize_text_field( $request->get_param( 'preset_id' ) );
 		$force     = rest_sanitize_boolean( $request->get_param( 'force' ) ?? false );
+		$dry_run   = rest_sanitize_boolean( $request->get_param( 'dry_run' ) ?? false );
 
 		$d5             = self::get_d5_presets();
 		$found          = false;
@@ -1517,6 +1524,14 @@ trait DiviOps_Agent_Preset {
 			);
 		}
 
+		if ( $dry_run ) {
+			$changes = [ [ 'kind' => 'preset.delete', 'target' => "preset/{$found['type']}/{$found['module']}/{$preset_id}", 'before' => $found, 'after' => null ] ];
+			if ( $default_cleared ) {
+				$changes[] = [ 'kind' => 'preset.default', 'target' => "preset/{$found['type']}/{$found['module']}/default", 'before' => $preset_id, 'after' => '' ];
+			}
+			return self::dry_run_response( 'Would delete one preset using legacy single-ID rules.', $changes, [ 'References are not checked in legacy single-ID mode. Use preset_ids for guarded deletion.' ], [ 'mutated' => false ] );
+		}
+
 		self::save_d5_presets( $d5 );
 
 		$response = [
@@ -1533,6 +1548,199 @@ trait DiviOps_Agent_Preset {
 			self::envelope_success( $response ),
 			self::d5_preset_write_meta()
 		);
+	}
+
+	/** Exact-set deletion never uses the legacy fallback/normalizing registry reader. */
+	private static function preset_delete_exact( $request ) {
+		$ids = $request->get_param( 'preset_ids' );
+		$dry = rest_sanitize_boolean( $request->get_param( 'dry_run' ) ?? false );
+		$expected = $request->get_param( 'expected_registry_checksum' );
+		if ( $request->has_param( 'preset_id' ) || ! is_array( $ids ) || count( $ids ) < 1 || count( $ids ) > 200 || array_keys( $ids ) !== range( 0, count( $ids ) - 1 ) ) {
+			return self::envelope_error( 'invalid_input', 'Use only preset_ids: a list of 1 to 200 unique exact IDs.', '', 400 );
+		}
+		foreach ( $ids as $id ) {
+			if ( ! is_string( $id ) || ! preg_match( '/^[A-Za-z0-9_-]{1,128}$/D', $id ) ) {
+				return self::envelope_error( 'invalid_input', 'Exact IDs must be 1 to 128 ASCII letters, digits, underscores or hyphens.', '', 400 );
+			}
+		}
+		if ( count( array_unique( $ids ) ) !== count( $ids ) || ( null !== $expected && ( ! is_string( $expected ) || ! preg_match( '/^sha256:[a-f0-9]{64}$/D', $expected ) ) ) || ( ! $dry && null === $expected ) ) {
+			return self::envelope_error( 'invalid_input', 'IDs must be unique; apply requires expected_registry_checksum from preview.', '', 400 );
+		}
+
+		$registry = self::read_canonical_d5_preset_registry( null );
+		try {
+			if ( ! is_array( $registry ) || ( ! isset( $registry['module'] ) && ! isset( $registry['group'] ) ) ) {
+				throw new UnexpectedValueException( 'Canonical D5 registry is absent or malformed.' );
+			}
+			// Validate the entire stored shape before copying or hashing it; no custom objects.
+			self::preset_delete_evidence_contains( $registry, [] );
+			$checksum = 'sha256:' . hash( 'sha256', serialize( $registry ) );
+			if ( null !== $expected && ! hash_equals( $checksum, $expected ) ) {
+				return self::envelope_error( 'conflict', 'Preset registry changed since preview.', 'Preview the exact set again.', 409, [ 'reason' => 'stale_registry' ] );
+			}
+			$matches = array_fill_keys( $ids, [] );
+			$references = false;
+			foreach ( [ 'module', 'group' ] as $type ) {
+				if ( ! array_key_exists( $type, $registry ) ) continue;
+				foreach ( self::preset_delete_evidence_map( $registry[ $type ] ) as $module => $raw_bucket ) {
+					$bucket = self::preset_delete_evidence_map( $raw_bucket );
+					if ( ! array_key_exists( 'items', $bucket ) || ( array_key_exists( 'default', $bucket ) && ! is_string( $bucket['default'] ) ) ) {
+						throw new UnexpectedValueException( 'Malformed preset bucket or default pointer.' );
+					}
+					$items = self::preset_delete_evidence_map( $bucket['items'] );
+					foreach ( $items as $id => $raw_record ) {
+						$record = self::preset_delete_evidence_map( $raw_record );
+						if ( empty( $record ) || ( array_key_exists( 'id', $record ) && $record['id'] !== (string) $id ) ) {
+							throw new UnexpectedValueException( 'Malformed preset record or inconsistent identity.' );
+						}
+						if ( isset( $matches[ $id ] ) ) {
+							$matches[ $id ][] = [ 'id' => (string) $id, 'type' => $type, 'module' => $module ];
+						}
+						// A record's own identity is not a use; every other occurrence is conservative evidence.
+						if ( isset( $record['id'] ) && $record['id'] === (string) $id ) unset( $record['id'] );
+						$references = self::preset_delete_evidence_contains( $record, $ids ) || $references;
+					}
+					unset( $bucket['items'] );
+					$references = self::preset_delete_evidence_contains( $bucket, $ids ) || $references;
+				}
+			}
+			$extra = $registry;
+			unset( $extra['module'], $extra['group'] );
+			$references = self::preset_delete_evidence_contains( $extra, $ids ) || $references;
+			$selected = [];
+			foreach ( $matches as $id => $locations ) {
+				if ( 1 !== count( $locations ) ) {
+					return self::envelope_error( 'conflict', 'Exact ID is unknown or ambiguous.', '', 409, [ 'reason' => empty( $locations ) ? 'unknown_id' : 'ambiguous_id', 'preset_id' => (string) $id ] );
+				}
+				$location = $locations[0];
+				$bucket = (array) ( (array) $registry[ $location['type'] ] )[ $location['module'] ];
+				if ( ( $bucket['default'] ?? '' ) === (string) $id ) {
+					return self::envelope_error( 'conflict', 'Exact-set deletion refuses defaults, including with force.', '', 409, [ 'reason' => 'is_default', 'preset_id' => (string) $id ] );
+				}
+				$selected[] = $location;
+			}
+			if ( $references ) {
+				return self::envelope_error( 'conflict', 'Selected IDs occur in preset definitions or default pointers.', '', 409, [ 'reason' => 'referenced' ] );
+			}
+			$coverage = self::preset_delete_scan_posts( $ids );
+			if ( $coverage['referenced'] ) {
+				return self::envelope_error( 'conflict', 'Selected IDs occur in post_content or postmeta.', '', 409, [ 'reason' => 'referenced' ] );
+			}
+		} catch ( UnexpectedValueException $error ) {
+			return self::envelope_error( 'conflict', $error->getMessage(), 'Incomplete evidence is not permission to delete. No presets were changed.', 409, [ 'reason' => 'incomplete_evidence' ] );
+		}
+
+		$changes = [];
+		foreach ( $selected as $item ) {
+			$changes[] = [ 'kind' => 'preset.delete', 'target' => "preset/{$item['type']}/{$item['module']}/{$item['id']}", 'before' => $item, 'after' => null ];
+		}
+		$evidence = [ 'registry_checksum' => $checksum, 'preset_ids' => $ids, 'coverage' => $coverage, 'mutated' => false ];
+		if ( $dry ) {
+			return self::dry_run_response( 'Would delete exactly ' . count( $selected ) . ' nondefault, unreferenced presets.', $changes, [ 'Point-in-time checks, not a transaction. Keep other writers and Visual Builder sessions idle.' ], $evidence );
+		}
+		// Preserve array/object shapes, every unselected record and every default pointer.
+		$updated = self::preset_registry_deep_copy( $registry );
+		foreach ( $selected as $item ) {
+			$type = $item['type'];
+			$module = $item['module'];
+			$types = (array) $updated[ $type ];
+			$bucket = (array) $types[ $module ];
+			$items = (array) $bucket['items'];
+			unset( $items[ $item['id'] ] );
+			$bucket['items'] = is_object( $bucket['items'] ) ? (object) $items : $items;
+			$types[ $module ] = is_object( $types[ $module ] ) ? (object) $bucket : $bucket;
+			$updated[ $type ] = is_object( $updated[ $type ] ) ? (object) $types : $types;
+		}
+		if ( ! self::write_canonical_d5_preset_registry( $updated ) ) {
+			return self::envelope_error( 'wp_error', 'Preset registry persistence failed.', 'Inspect current state before retrying.', 500 );
+		}
+		if ( serialize( self::read_canonical_d5_preset_registry( null ) ) !== serialize( $updated ) ) {
+			return self::envelope_error( 'wp_error', 'Preset registry readback did not match the exact deletion.', 'A write occurred. Inspect current state; no rollback or retry was attempted.', 500, [ 'mutated' => true, 'readback_verified' => false ] );
+		}
+		return self::attach_meta(
+			self::envelope_success( array_merge( $evidence, [ 'mutated' => true, 'deleted' => $selected, 'readback_verified' => true ] ) ),
+			self::d5_preset_write_meta()
+		);
+	}
+
+	private static function preset_delete_evidence_map( $value ): array {
+		if ( ! is_array( $value ) && ! ( $value instanceof stdClass ) ) {
+			throw new UnexpectedValueException( 'Malformed preset deletion evidence: expected a map.' );
+		}
+		return (array) $value;
+	}
+
+	/** Bounded stored-value inspection, not a semantic usage classifier. */
+	private static function preset_delete_evidence_contains( $value, array $ids, int $depth = 0 ): bool {
+		if ( $depth > 64 ) throw new UnexpectedValueException( 'Preset deletion evidence exceeds nesting limit.' );
+		$found = false;
+		if ( is_array( $value ) || $value instanceof stdClass ) {
+			foreach ( $value as $key => $child ) {
+				foreach ( $ids as $id ) if ( false !== strpos( (string) $key, $id ) ) $found = true;
+				$found = self::preset_delete_evidence_contains( $child, $ids, $depth + 1 ) || $found;
+			}
+		} elseif ( is_string( $value ) ) {
+			foreach ( $ids as $id ) if ( false !== strpos( $value, $id ) ) $found = true;
+			if ( false !== strpos( $value, 'wp:' ) ) {
+				$normalized = self::normalize_divi_full_content_for_write( $value );
+				if ( ! $normalized['ok'] || is_wp_error( self::assert_divi_full_content_safe_for_write( $value ) ) ) {
+					throw new UnexpectedValueException( 'Malformed Divi content prevents complete reference evidence.' );
+				}
+				$openers = self::scan_block_opener_attrs( $value );
+				if ( PREG_NO_ERROR !== preg_last_error() || count( $openers ) !== preg_match_all( '/<!--\s+wp:/', $value ) ) {
+					throw new UnexpectedValueException( 'Incomplete block opener evidence.' );
+				}
+				foreach ( $openers as $opener ) {
+					if ( null === $opener['attrs'] ) continue;
+					$attrs = json_decode( $opener['attrs'], false, 64 );
+					if ( ! ( $attrs instanceof stdClass ) || JSON_ERROR_NONE !== json_last_error() ) throw new UnexpectedValueException( 'Malformed block attributes.' );
+					$found = self::preset_delete_evidence_contains( $attrs, $ids, $depth + 1 ) || $found;
+				}
+			}
+			$trimmed = trim( $value );
+			if ( preg_match( '/^(?:[aOsC]:\d+:|[bidrR]:[+-]?\d|N;)/', $trimmed ) ) {
+				// Never instantiate objects from postmeta. Invalid/unsupported serialization refuses.
+				$decoded = @unserialize( $trimmed, [ 'allowed_classes' => false ] );
+				if ( serialize( $decoded ) !== $trimmed ) throw new UnexpectedValueException( 'Malformed or noncanonical serialized deletion evidence.' );
+				$found = self::preset_delete_evidence_contains( $decoded, $ids, $depth + 1 ) || $found;
+			} elseif ( '' !== $trimmed && in_array( $trimmed[0], [ '{', '[', '"' ], true ) ) {
+				$decoded = json_decode( $trimmed, false, 64 );
+				if ( JSON_ERROR_NONE === json_last_error() ) {
+					$found = self::preset_delete_evidence_contains( $decoded, $ids, $depth + 1 ) || $found;
+				} elseif ( preg_match( '/^\{\s*"[^"\r\n]*"\s*:|^\[\s*[\[{"]|\\\\u[0-9a-f]{4}/i', $trimmed ) ) {
+					throw new UnexpectedValueException( 'Malformed JSON-shaped deletion evidence.' );
+				}
+				// Shortcodes, CSS selectors and quoted prose are not necessarily JSON.
+			}
+		} elseif ( is_object( $value ) || is_resource( $value ) ) {
+			throw new UnexpectedValueException( 'Unsupported object in deletion evidence.' );
+		}
+		return $found;
+	}
+
+	/** No post type/status filter: revisions, trash, library and Theme Builder are included. */
+	private static function preset_delete_scan_posts( array $ids ): array {
+		global $wpdb;
+		if ( ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_results' ) || empty( $wpdb->posts ) || empty( $wpdb->postmeta ) ) {
+			throw new UnexpectedValueException( 'Post evidence scan is unavailable.' );
+		}
+		$coverage = [ 'referenced' => false, 'posts' => 0, 'postmeta' => 0, 'bytes' => 0 ];
+		foreach ( [ 'posts' => [ $wpdb->posts, 'post_content' ], 'postmeta' => [ $wpdb->postmeta, 'meta_value' ] ] as $scope => $source ) {
+			[ $table, $column ] = $source;
+			$rows = $wpdb->get_results( $wpdb->prepare( 'SELECT %i FROM %i LIMIT 10001', $column, $table ), ARRAY_A );
+			if ( ! is_array( $rows ) || ! empty( $wpdb->last_error ) || count( $rows ) > 10000 ) {
+				throw new UnexpectedValueException( 'Post evidence query failed or exceeded 10000 rows per table.' );
+			}
+			foreach ( $rows as $row ) {
+				if ( ! isset( $row[ $column ] ) || ! is_string( $row[ $column ] ) ) throw new UnexpectedValueException( 'Incomplete post evidence row.' );
+				$content = $row[ $column ];
+				$coverage['bytes'] += strlen( $content );
+				if ( $coverage['bytes'] > 67108864 ) throw new UnexpectedValueException( 'Post evidence exceeds 64 MiB.' );
+				$coverage[ $scope ]++;
+				$coverage['referenced'] = self::preset_delete_evidence_contains( $content, $ids ) || $coverage['referenced'];
+			}
+		}
+		return $coverage;
 	}
 
 	/**

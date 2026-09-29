@@ -155,12 +155,14 @@ trait DiviOps_Agent_Page {
 	public static function page_content_read_uncached( int $post_id ): ?string {
 		global $wpdb;
 
-		if ( ! isset( $wpdb->posts ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+		if ( ! isset( $wpdb->posts ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_row' ) ) {
 			return null;
 		}
-		$content = $wpdb->get_var(
+		// get_var() collapses valid empty content to null; keep row absence distinct.
+		$row = $wpdb->get_row(
 			$wpdb->prepare( "SELECT post_content FROM {$wpdb->posts} WHERE ID = %d LIMIT 1", $post_id )
 		);
+		$content = $row->post_content ?? null;
 		return is_string( $content ) ? $content : null;
 	}
 

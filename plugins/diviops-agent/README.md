@@ -42,11 +42,22 @@ The plugin includes a WordPress.org-format `readme.txt` and a plugin-local `chan
 
 Current metadata policy:
 
-- `Stable tag` matches the plugin header `Version` (`1.5.26`).
+- `Stable tag` matches the plugin header `Version` (`1.5.27`).
 - `Requires at least` and `Requires PHP` mirror the main plugin header.
 - `Tested up to` is evidence-based for this repo/substrate and should not be raised until the Free plugin is actually tested on that WordPress version.
 - External-service/authentication disclosure must mention the separately distributed npm MCP server, WordPress Application Passwords, and the rule that secrets do not belong in issues, examples, screenshots, or repo files.
 - Free/Pro copy must keep the Free plugin useful while making clear that Pro is the paid workflow-leverage layer and that not every MCP tool is Free-backed.
+
+Free 1.5.27 prepares real preset-deletion previews and guarded exact-ID set
+deletion through `preset_delete_exact_v1`, literal native Code content validation,
+and correct uncached empty-content reads/readback. Exact-set apply requires the
+reviewed registry checksum and fresh bounded reference checks; force cannot
+bypass them. Legacy single-ID deletion retains its default-only guard, without
+reference checks. This is point-in-time protection, not a transaction or rollback.
+MCP 1.5.55 also adds optional process-local, one-use reviewed page-content
+references; retention is MCP-side, not a new plugin upload or storage service.
+Reconnect after updating to refresh capabilities. These are source candidates,
+not evidence of package installation, staging fixes or runtime qualification.
 
 Free 1.5.26 prepares optional bounded `page_get` reads. With MCP 1.5.54,
 `bounded:true` returns UTF-8-safe raw content chunks of at most 4096 bytes and

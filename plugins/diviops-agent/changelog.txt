@@ -9,6 +9,12 @@ Policy:
 - Keep entries customer-facing. Avoid internal issue numbers unless they are needed to explain a user-visible change.
 - Do not include secrets, credentials, customer data, or environment-specific URLs.
 
+## 1.5.27
+
+- Adds real preset-deletion previews and guarded exact-ID set deletion with a required registry checksum and fresh bounded reference checks. Legacy single-ID deletion retains its default-only guard; exact-set checks cannot be bypassed with force.
+- Preserves literal pseudo-escapes inside native Code content strings while sharing serialization checks between validation and writes. JSON and block delimiters must remain valid.
+- Preserves valid empty page content in uncached reads instead of treating it as unavailable, including guarded write readback.
+
 ## 1.5.26
 
 - Adds optional bounded page-content reads with UTF-8-safe chunks and a full-content checksum required for continuation. Content drift refuses continuation rather than mixing versions.
