@@ -30975,6 +30975,77 @@ async function requestAuthoringWrite(client, spec) {
   };
 }
 
+// src/page-content-candidates.ts
+import { createHash as createHash2, randomBytes } from "node:crypto";
+var PAGE_CANDIDATE_LIMITS = Object.freeze({ ttlMs: 3e5, count: 8, candidateBytes: 2 * 1024 * 1024, totalBytes: 8 * 1024 * 1024 });
+var candidateError = (code, message) => ({ ok: false, error: { code, message } });
+var checksum2 = (content) => `sha256:${createHash2("sha256").update(content, "utf8").digest("hex")}`;
+var PageContentCandidates = class {
+  constructor(now = Date.now) {
+    this.now = now;
+  }
+  now;
+  entries = /* @__PURE__ */ new Map();
+  bytes = 0;
+  timer;
+  prune() {
+    for (const [ref, entry] of this.entries) {
+      if (entry.expires <= this.now()) this.remove(ref, entry);
+    }
+  }
+  remove(ref, entry) {
+    this.entries.delete(ref);
+    this.bytes -= entry.bytes;
+  }
+  schedule() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = void 0;
+    if (!this.entries.size) return;
+    const expires = Math.min(...Array.from(this.entries.values(), (e) => e.expires));
+    this.timer = setTimeout(() => {
+      this.prune();
+      this.schedule();
+    }, Math.max(1, expires - this.now()));
+    this.timer.unref();
+  }
+  reserve(binding, content) {
+    this.prune();
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (bytes > PAGE_CANDIDATE_LIMITS.candidateBytes || this.entries.size >= PAGE_CANDIDATE_LIMITS.count || this.bytes + bytes > PAGE_CANDIDATE_LIMITS.totalBytes) {
+      return candidateError("page.content_ref_capacity", "Candidate retention capacity exceeded; resend content after capacity becomes available.");
+    }
+    const ref = `pcr_${randomBytes(32).toString("hex")}`;
+    const entry = { ...binding, content, content_checksum: checksum2(content), bytes, expires: this.now() + PAGE_CANDIDATE_LIMITS.ttlMs, ready: false };
+    this.entries.set(ref, entry);
+    this.bytes += bytes;
+    this.schedule();
+    return { ok: true, data: { content_ref: ref, content_checksum: entry.content_checksum, expires_at: new Date(entry.expires).toISOString() } };
+  }
+  confirm(ref) {
+    this.prune();
+    const entry = this.entries.get(ref);
+    if (!entry) return false;
+    entry.ready = true;
+    return true;
+  }
+  cancel(ref) {
+    const entry = this.entries.get(ref);
+    if (entry && !entry.ready) this.remove(ref, entry);
+    this.schedule();
+  }
+  consume(ref, binding) {
+    this.prune();
+    const entry = this.entries.get(ref);
+    if (!entry || !entry.ready) return candidateError("page.content_ref_invalid", "Unknown, expired, or consumed content_ref. Run a new retained dry-run.");
+    if (entry.site !== binding.site || entry.page_id !== binding.page_id || entry.expected_checksum !== binding.expected_checksum || entry.backup !== binding.backup || checksum2(entry.content) !== entry.content_checksum) {
+      return candidateError("page.content_ref_mismatch", "content_ref does not match the site, page, reviewed checksum, or backup intent.");
+    }
+    this.remove(ref, entry);
+    this.schedule();
+    return { ok: true, data: entry.content };
+  }
+};
+
 // src/compatibility.ts
 function proToolGatesSatisfied(state, gates) {
   if (state.proActive !== true) return false;
@@ -31047,7 +31118,7 @@ function missingCapabilityEnvelope(error48, toolName, options = {}) {
 }
 
 // src/cross-env-preflight/header-preflight.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 var SUPPORTED_KIND = "tb_header_layout";
 var UPLOADS_PREFIX = "/wp-content/uploads/";
 var ABSOLUTE_URL_RE = /https?:\/\/[^\s"'<>\\)]+/g;
@@ -31083,30 +31154,30 @@ function decodeMarkup(markup) {
   );
 }
 function sha256(value) {
-  return createHash2("sha256").update(value).digest("hex");
+  return createHash3("sha256").update(value).digest("hex");
 }
-function normalizeChecksum(checksum2) {
-  if (!checksum2) return void 0;
-  return checksum2.trim().replace(/^sha256:/i, "").toLowerCase();
+function normalizeChecksum(checksum3) {
+  if (!checksum3) return void 0;
+  return checksum3.trim().replace(/^sha256:/i, "").toLowerCase();
 }
 function isSha256Hex(value) {
   return /^[a-f0-9]{64}$/.test(value);
 }
-function normalizeDestinationChecksum(checksum2) {
-  if (checksum2 === void 0 || checksum2 === null) return void 0;
-  if (typeof checksum2 === "string") {
-    const computed2 = normalizeChecksum(checksum2);
+function normalizeDestinationChecksum(checksum3) {
+  if (checksum3 === void 0 || checksum3 === null) return void 0;
+  if (typeof checksum3 === "string") {
+    const computed2 = normalizeChecksum(checksum3);
     if (!computed2) return void 0;
     return { algorithm: "sha256", computed: computed2 };
   }
-  if (typeof checksum2 !== "object") return void 0;
-  const algorithm = typeof checksum2.algorithm === "string" ? checksum2.algorithm.toLowerCase() : "";
-  const computed = normalizeChecksum(checksum2.computed);
+  if (typeof checksum3 !== "object") return void 0;
+  const algorithm = typeof checksum3.algorithm === "string" ? checksum3.algorithm.toLowerCase() : "";
+  const computed = normalizeChecksum(checksum3.computed);
   if (algorithm !== "sha256" || !computed) return void 0;
   return {
     algorithm: "sha256",
     computed,
-    input: checksum2.input === "post_content" ? "post_content" : void 0
+    input: checksum3.input === "post_content" ? "post_content" : void 0
   };
 }
 function normalizeOrigin(origin, field) {
@@ -31835,16 +31906,16 @@ function preflightCrossEnvHeaderSync(input) {
 }
 
 // src/cross-env-preflight/layout-preflight.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 
 // src/cross-env-preflight/staff-body.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 function staffCanonical(value) {
   const sort = (v) => Array.isArray(v) ? v.map(sort) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort(v[k])])) : v;
   return JSON.stringify(sort(value));
 }
 function staffProof(evidence) {
-  return { evidence, digest: { algorithm: "sha256", computed: createHash3("sha256").update(staffCanonical(evidence)).digest("hex") } };
+  return { evidence, digest: { algorithm: "sha256", computed: createHash4("sha256").update(staffCanonical(evidence)).digest("hex") } };
 }
 var expected = {
   "divi/image:image.innerContent.desktop.value.src": { type: "content", value: { name: "post_featured_image", settings: { thumbnail_size: "large" } } },
@@ -31899,7 +31970,7 @@ var THEME_BUILDER_LAYOUT_KIND_POST_TYPES = {
 };
 var THEME_BUILDER_LAYOUT_VALIDATOR_VERSION = "diviops.cross_env.theme_builder_layout.validator.v1";
 function sha2562(value) {
-  return createHash4("sha256").update(value).digest("hex");
+  return createHash5("sha256").update(value).digest("hex");
 }
 function canonicalize2(value) {
   if (Array.isArray(value)) return value.map(canonicalize2);
@@ -32125,14 +32196,14 @@ function sourceHintsFromPayload(source) {
 }
 
 // src/cross-env-preflight/source-payload-ref.ts
-import { createHash as createHash5, randomUUID } from "node:crypto";
+import { createHash as createHash6, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 var DEFAULT_TTL_SECONDS = 24 * 60 * 60;
 var MAX_TTL_SECONDS = 10 * 365 * 24 * 60 * 60;
 var HANDLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 function sha2563(value) {
-  return createHash5("sha256").update(value).digest("hex");
+  return createHash6("sha256").update(value).digest("hex");
 }
 function payloadRoot() {
   return process.env.DIVIOPS_CROSS_ENV_PAYLOAD_REF_DIR || join(process.cwd(), ".diviops-tmp", "cross-env-source-payloads");
@@ -33262,6 +33333,7 @@ var wp = new WPClient({
   applicationPassword: WP_APP_PASSWORD
 });
 var authoringWrite = (endpoint, method, body, operation, dryRun) => requestAuthoringWrite(wp, { endpoint, method, body, operation, dryRun });
+var pageContentCandidates = new PageContentCandidates();
 var WP_PATH = process.env.WP_PATH ?? "";
 var WP_CLI_CMD = process.env.WP_CLI_CMD?.trim() ?? "";
 var LOCAL_SITE_ID = process.env.LOCAL_SITE_ID ?? "";
@@ -34306,12 +34378,14 @@ registerPluginTool(
 registerPluginTool(
   "diviops_page_update_content",
   {
-    description: "Update the content of a page with Divi block markup. The content should be valid WordPress block markup using divi/* blocks. IMPORTANT: This overwrites the entire page content. Pass expected_checksum from diviops_page_get to refuse stale writes; omission preserves the legacy unconditional-write contract. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing page_id returns 'not_found', edit-permission failures return 'forbidden' (HTTP 403), stale content returns 'page.content_drift' (HTTP 409), and non-string content returns 'invalid_input' with `error.data = { field, received_type }`." + DRY_RUN_DESC_SUFFIX,
+    description: "Update the content of a page with Divi block markup. The content should be valid WordPress block markup using divi/* blocks. IMPORTANT: This overwrites the entire page content. Pass expected_checksum from diviops_page_get to refuse stale writes; omission preserves the legacy unconditional-write contract. Optionally set retain_content:true with dry_run:true and expected_checksum to retain a successful candidate in this process for 5 minutes (2 MiB each, 8 references / 8 MiB total). Returns data.content_ref, content_checksum, expires_at alongside the dry-run plan. Apply using content_ref instead of content, repeating the same page_id, expected_checksum and backup intent. References are process-local and single-use, consumed before writer dispatch even on failure; never automatically retry. Restart/expiry requires a new dry-run. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing page_id returns 'not_found', edit-permission failures return 'forbidden' (HTTP 403), stale content returns 'page.content_drift' (HTTP 409), and non-string content returns 'invalid_input' with `error.data = { field, received_type }`." + DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       page_id: external_exports3.number().describe("WordPress post/page ID to update"),
-      content: external_exports3.string().describe(
+      content: external_exports3.string().optional().describe(
         "Full page content in WordPress block markup format (<!-- wp:divi/section -->...<!-- /wp:divi/section -->)"
       ),
+      content_ref: external_exports3.string().optional().describe("Single-use reference from a successful retained dry-run; apply only, mutually exclusive with content."),
+      retain_content: external_exports3.boolean().optional().describe("Retain content only on an explicitly confirmed successful dry-run. Requires expected_checksum. content_checksum hashes exact submitted UTF-8 bytes, not normalized persisted bytes. Capacity and the 5-minute TTL begin before the upstream request. MCP-process-local, not isolated per client session."),
       expected_checksum: external_exports3.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("Optional review binding from diviops_page_get.content_checksum. When supplied, drift refuses with no force path."),
       dry_run: DRY_RUN_FIELD,
       backup: BACKUP_FIELD
@@ -34319,7 +34393,20 @@ registerPluginTool(
     annotations: { idempotentHint: false },
     _meta: { idempotent: "conditional" }
   },
-  async ({ page_id, content, expected_checksum, dry_run, backup }) => {
+  async ({ page_id, content, content_ref, retain_content, expected_checksum, dry_run, backup }) => {
+    const reply = (result) => ({ content: [{ type: "text", text: serializeEnvelope(result, "diviops_page_update_content") }] });
+    if (content === void 0 === (content_ref === void 0) || retain_content === true && (dry_run !== true || content === void 0) || content_ref !== void 0 && (dry_run === true || retain_content === true) || (retain_content === true || content_ref !== void 0) && (expected_checksum === void 0 || !Number.isSafeInteger(page_id) || page_id <= 0)) {
+      return reply(candidateError("invalid_input", "Provide exactly one of content or content_ref. Retention requires content, dry_run:true, a positive page_id and expected_checksum; reference apply requires the same page, checksum and backup intent."));
+    }
+    if (retain_content && Buffer.byteLength(content, "utf8") > PAGE_CANDIDATE_LIMITS.candidateBytes) {
+      return reply(candidateError("page.content_ref_capacity", "Retained candidate exceeds the 2 MiB limit."));
+    }
+    const binding = { site: WP_URL, page_id, expected_checksum, backup: backup === true };
+    if (content_ref !== void 0) {
+      const resolved = pageContentCandidates.consume(content_ref, binding);
+      if (!resolved.ok) return reply(resolved);
+      content = resolved.data;
+    }
     const backupGate = backupCapabilityError("diviops_page_update_content", backup);
     if (backupGate) return backupGate;
     const checksumGate = conditionalCapabilityError(
@@ -34338,12 +34425,24 @@ registerPluginTool(
     if (expected_checksum !== void 0) body.expected_checksum = expected_checksum;
     if (dry_run) body.dry_run = true;
     if (backup) body.backup = true;
-    const result = await authoringWrite(`/page/update-content/${page_id}`, "POST", body, "page_update_content", dry_run === true);
-    return {
-      content: [
-        { type: "text", text: serializeEnvelope(result, "diviops_page_update_content") }
-      ]
-    };
+    const reservation = retain_content ? pageContentCandidates.reserve(binding, content) : void 0;
+    if (reservation && !reservation.ok) return reply(reservation);
+    try {
+      const result = await authoringWrite(`/page/update-content/${page_id}`, "POST", body, "page_update_content", dry_run === true);
+      if (reservation?.ok && result.ok) {
+        const data = result.data;
+        if (!data || typeof data !== "object" || !("dry_run" in data) || data.dry_run !== true) {
+          return reply(candidateError("page.content_ref_unconfirmed", "Writer did not confirm a successful dry-run; no candidate retained."));
+        }
+        if (!pageContentCandidates.confirm(reservation.data.content_ref)) {
+          return reply(candidateError("page.content_ref_invalid", "Candidate expired during dry-run; run a new retained dry-run."));
+        }
+        return reply({ ok: true, data: { ...data, ...reservation.data } });
+      }
+      return reply(result);
+    } finally {
+      if (reservation?.ok) pageContentCandidates.cancel(reservation.data.content_ref);
+    }
   }
 );
 registerPluginTool(
@@ -34429,7 +34528,7 @@ registerPluginTool(
 registerPluginTool(
   "diviops_validate_blocks",
   {
-    description: "Validate Divi block markup before saving. Accepts EITHER inline `content` (string of block markup) OR `page_id` (loads `post_content` from the DB, requires edit_post capability on the page \u2014 useful for regression checks on shipped pages without round-tripping the markup blob). Provide exactly one. Checks structure (malformed comments, unknown blocks, missing builderVersion), required attributes (layout display on containers), and known pitfalls (button padding path, icon.enable, gradient enabled/positions). Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success payload is { valid: bool, total_blocks: number, errors: Finding[], warnings: Finding[] } where each Finding is { block, index, code, message, path? }. Note: shape errors detected in the markup surface as success-branch `data.errors[]` entries (NOT `validation_failed` envelopes) \u2014 the findings array is the payload, not an error. The envelope's error branch fires only for tool-level failures (`invalid_input` for neither/both supplied or invalid page_id; `forbidden` for missing edit_post; `not_found` for unknown page_id; `divi_error` for an exception in the walker).",
+    description: "Validate Divi block markup before saving. Accepts EITHER inline `content` (string of block markup) OR `page_id` (loads `post_content` from the DB, requires edit_post capability on the page \u2014 useful for regression checks on shipped pages without round-tripping the markup blob). Provide exactly one. Checks shared write serialization and marker integrity (literal pseudo-escapes are allowed in native Code content strings), structure (malformed comments, unknown blocks, missing builderVersion), required attributes (layout display on containers), and known pitfalls (button padding path, icon.enable, gradient enabled/positions). Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success payload is { valid: bool, total_blocks: number, errors: Finding[], warnings: Finding[] } where each Finding is { block, index, code, message, path? }. Serialization failures return valid:false with invalid_serialization findings and total_blocks:0 because the tree was not walked. Note: shape errors detected in the markup surface as success-branch `data.errors[]` entries (NOT `validation_failed` envelopes) \u2014 the findings array is the payload, not an error. The envelope's error branch fires only for tool-level failures (`invalid_input` for neither/both supplied or invalid page_id; `forbidden` for missing edit_post; `not_found` for unknown page_id; `divi_error` for an exception in the walker).",
     inputSchema: {
       content: external_exports3.string().optional().describe(
         "Divi block markup to validate. Provide exactly one of {content, page_id}."
@@ -35161,19 +35260,31 @@ registerPluginTool(
 registerPluginTool(
   "diviops_preset_delete",
   {
-    description: "Delete a specific preset by ID. Use diviops_preset_audit first to verify the preset is unreferenced before deleting. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing preset_id returns code 'not_found' with a hint to diviops_preset_audit. Refuses with code 'conflict' (HTTP 409) and `error.data = { preset_id, type, module, name, reason: 'is_default' }` if the target is the registered default for its module/group bucket \u2014 clear the pointer first via diviops_preset_set_default with unset=true, or pass force=true to delete and clear the pointer in one write. The `reason` discriminator field leaves room for future conflict reasons (referenced_in_chain, etc.) without reshaping.",
+    description: "Delete presets by exact ID. Legacy preset_id mode checks only the bucket default, NOT references; force=true deletes a default and clears its pointer. Additive preset_ids mode accepts 1-200 unique IDs, refuses defaults, references, unknown/ambiguous IDs, stale registry and incomplete evidence; force cannot bypass these checks. Preview with dry_run:true returns an exact plan and registry_checksum; apply requires expected_registry_checksum and rescans references. Scans all post_content (including revisions/Theme Builder), postmeta, canonical preset definitions/default pointers; conservative matches refuse. Evidence limits: 10000 rows per table, 64 MiB post evidence, nesting 64; unsupported/malformed evidence refuses. Only selected records are removed, in one registry write. No content edits, normalization, transactional guarantee or automatic rollback. Keep other writers idle. Real dry_run in either mode and all exact-set calls require preset_delete_exact_v1; older/unknown plugin capability refuses before dispatch. Returns the standardized envelope; exact-set conflicts carry error.data.reason. Legacy missing IDs return not_found.",
     inputSchema: {
-      preset_id: external_exports3.string().describe("Preset ID to delete"),
+      preset_id: external_exports3.string().min(1).optional().describe("Legacy single ID; mutually exclusive with preset_ids. No reference safeguard."),
+      preset_ids: external_exports3.array(external_exports3.string().regex(/^[A-Za-z0-9_-]{1,128}$/)).min(1).max(200).optional().describe("Exact guarded selection, never name/duplicate heuristics."),
+      dry_run: external_exports3.boolean().optional().describe("True previews with zero writes; false/omitted applies. Capability-gated in both modes."),
+      expected_registry_checksum: external_exports3.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("Exact preview registry_checksum, required for preset_ids apply only."),
       force: external_exports3.boolean().optional().describe(
-        "When true, deletes the preset even if it is the registered default and clears the default pointer in the same write. Default false (refuse-by-default)."
+        "Legacy preset_id only: delete a default and clear its pointer. Ignored in exact-set mode; never bypasses its safeguards."
       )
     },
     annotations: { idempotentHint: true },
     _meta: { idempotent: "true" }
   },
-  async ({ preset_id, force }) => {
-    const body = { preset_id };
+  async ({ preset_id, preset_ids, force, dry_run, expected_registry_checksum }) => {
+    const exact = preset_ids !== void 0;
+    if (preset_id !== void 0 === exact || exact && (new Set(preset_ids).size !== preset_ids.length || !dry_run && expected_registry_checksum === void 0) || !exact && expected_registry_checksum !== void 0) {
+      return { content: [{ type: "text", text: serializeEnvelope({ ok: false, error: { code: "invalid_input", message: "Supply preset_id OR 1-200 unique preset_ids; exact-set apply requires expected_registry_checksum from preview." } }, "diviops_preset_delete") }] };
+    }
+    if ((exact || dry_run !== void 0 || expected_registry_checksum !== void 0) && (handshakeState.kind !== "ok" || handshakeState.capabilities.preset_delete_exact_v1 !== true)) {
+      return missingCapabilityEnvelope(new MissingCapabilityError("preset_delete_exact_v1", handshakeState.kind === "ok" ? handshakeState.pluginVersion : void 0), "diviops_preset_delete", { serverVersion: SERVER_VERSION });
+    }
+    const body = exact ? { preset_ids } : { preset_id };
     if (force !== void 0) body.force = force;
+    if (dry_run !== void 0) body.dry_run = dry_run;
+    if (expected_registry_checksum !== void 0) body.expected_registry_checksum = expected_registry_checksum;
     const result = await wp.requestEnveloped("/preset/delete", {
       method: "POST",
       body
@@ -35602,7 +35713,7 @@ registerPluginTool(
 registerPluginTool(
   "diviops_tb_layout_block_insert",
   {
-    description: "Insert one or more serialized Divi blocks into an existing Theme Builder layout without replacing the whole layout. Target a unique parent with `parent_selector` (for example `divi/group[adminLabel=\"Legal Col\"]`, or `divi/group` only when it is unique) or an explicit zero-based `parent_path` from the parsed block tree such as `0.1.2`. `position=append|prepend` inserts as children of the target block; `position=before|after` inserts beside the target within its parent. Ambiguous selectors return ok:false with code 'invalid_input'; missing targets return 'not_found'. The route parses and validates the inserted blocks, rejects malformed pseudo-escapes such as bare `u003c`, validates the final serialized layout before saving, and returns a no-op when the exact requested block sequence already exists at the insertion point." + DRY_RUN_DESC_SUFFIX,
+    description: "Insert one or more serialized Divi blocks into an existing Theme Builder layout without replacing the whole layout. Target a unique parent with `parent_selector` (for example `divi/group[adminLabel=\"Legal Col\"]`, or `divi/group` only when it is unique) or an explicit zero-based `parent_path` from the parsed block tree such as `0.1.2`. `position=append|prepend` inserts as children of the target block; `position=before|after` inserts beside the target within its parent. Ambiguous selectors return ok:false with code 'invalid_input'; missing targets return 'not_found'. The route parses and validates the inserted blocks, rejects malformed serialization (literal pseudo-escapes such as bare `u003c` are allowed in native Code content strings), validates the final serialized layout before saving, and returns a no-op when the exact requested block sequence already exists at the insertion point." + DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       layout_id: external_exports3.number().int().describe("Theme Builder layout post ID to mutate"),
       parent_selector: external_exports3.string().optional().describe('Unique selector such as `divi/group[adminLabel="Legal Col"]` or `divi/column`. Provide exactly one of parent_selector or parent_path.'),

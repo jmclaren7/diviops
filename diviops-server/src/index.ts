@@ -16,6 +16,7 @@ import { z } from "zod";
 import { WPClient } from "./wp-client.js";
 import { BOUNDED_PAGE_CAPABILITY, boundedPageError, serializeBoundedPageRead } from "./bounded-page-read.js";
 import { requestAuthoringWrite } from "./authoring-shape-integration.js";
+import { PageContentCandidates, PAGE_CANDIDATE_LIMITS, candidateError } from "./page-content-candidates.js";
 import {
   capabilityUpgradeHint,
   type HandshakePluginInfo,
@@ -104,6 +105,7 @@ const wp = new WPClient({
 });
 const authoringWrite = (endpoint: string, method: string, body: Record<string, unknown>, operation: string, dryRun: boolean) =>
   requestAuthoringWrite(wp, { endpoint, method, body, operation, dryRun });
+const pageContentCandidates = new PageContentCandidates();
 
 // WP-CLI (optional — Local by Flywheel via WP_PATH, or custom wrapper via WP_CLI_CMD)
 const WP_PATH = process.env.WP_PATH ?? "";
@@ -1628,15 +1630,18 @@ registerPluginTool(
   "diviops_page_update_content",
   {
     description:
-      "Update the content of a page with Divi block markup. The content should be valid WordPress block markup using divi/* blocks. IMPORTANT: This overwrites the entire page content. Pass expected_checksum from diviops_page_get to refuse stale writes; omission preserves the legacy unconditional-write contract. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing page_id returns 'not_found', edit-permission failures return 'forbidden' (HTTP 403), stale content returns 'page.content_drift' (HTTP 409), and non-string content returns 'invalid_input' with `error.data = { field, received_type }`." +
+      "Update the content of a page with Divi block markup. The content should be valid WordPress block markup using divi/* blocks. IMPORTANT: This overwrites the entire page content. Pass expected_checksum from diviops_page_get to refuse stale writes; omission preserves the legacy unconditional-write contract. Optionally set retain_content:true with dry_run:true and expected_checksum to retain a successful candidate in this process for 5 minutes (2 MiB each, 8 references / 8 MiB total). Returns data.content_ref, content_checksum, expires_at alongside the dry-run plan. Apply using content_ref instead of content, repeating the same page_id, expected_checksum and backup intent. References are process-local and single-use, consumed before writer dispatch even on failure; never automatically retry. Restart/expiry requires a new dry-run. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing page_id returns 'not_found', edit-permission failures return 'forbidden' (HTTP 403), stale content returns 'page.content_drift' (HTTP 409), and non-string content returns 'invalid_input' with `error.data = { field, received_type }`." +
       DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       page_id: z.number().describe("WordPress post/page ID to update"),
       content: z
         .string()
+        .optional()
         .describe(
           "Full page content in WordPress block markup format (<!-- wp:divi/section -->...<!-- /wp:divi/section -->)",
         ),
+      content_ref: z.string().optional().describe("Single-use reference from a successful retained dry-run; apply only, mutually exclusive with content."),
+      retain_content: z.boolean().optional().describe("Retain content only on an explicitly confirmed successful dry-run. Requires expected_checksum. content_checksum hashes exact submitted UTF-8 bytes, not normalized persisted bytes. Capacity and the 5-minute TTL begin before the upstream request. MCP-process-local, not isolated per client session."),
       expected_checksum: z
         .string()
         .regex(/^sha256:[a-f0-9]{64}$/)
@@ -1648,7 +1653,23 @@ registerPluginTool(
     annotations: { idempotentHint: false },
     _meta: { idempotent: "conditional" },
   },
-  async ({ page_id, content, expected_checksum, dry_run, backup }) => {
+  async ({ page_id, content, content_ref, retain_content, expected_checksum, dry_run, backup }) => {
+    const reply = (result: DiviopsResponse<unknown>) => ({ content: [{ type: "text" as const, text: serializeEnvelope(result, "diviops_page_update_content") }] });
+    if ((content === undefined) === (content_ref === undefined) ||
+        (retain_content === true && (dry_run !== true || content === undefined)) ||
+        (content_ref !== undefined && (dry_run === true || retain_content === true)) ||
+        ((retain_content === true || content_ref !== undefined) && (expected_checksum === undefined || !Number.isSafeInteger(page_id) || page_id <= 0))) {
+      return reply(candidateError("invalid_input", "Provide exactly one of content or content_ref. Retention requires content, dry_run:true, a positive page_id and expected_checksum; reference apply requires the same page, checksum and backup intent."));
+    }
+    if (retain_content && Buffer.byteLength(content!, "utf8") > PAGE_CANDIDATE_LIMITS.candidateBytes) {
+      return reply(candidateError("page.content_ref_capacity", "Retained candidate exceeds the 2 MiB limit."));
+    }
+    const binding = { site: WP_URL, page_id, expected_checksum: expected_checksum!, backup: backup === true };
+    if (content_ref !== undefined) {
+      const resolved = pageContentCandidates.consume(content_ref, binding);
+      if (!resolved.ok) return reply(resolved);
+      content = resolved.data;
+    }
     const backupGate = backupCapabilityError("diviops_page_update_content", backup);
     if (backupGate) return backupGate;
     const checksumGate = conditionalCapabilityError(
@@ -1667,12 +1688,24 @@ registerPluginTool(
     if (expected_checksum !== undefined) body.expected_checksum = expected_checksum;
     if (dry_run) body.dry_run = true;
     if (backup) body.backup = true;
-    const result = await authoringWrite(`/page/update-content/${page_id}`, "POST", body, "page_update_content", dry_run === true);
-    return {
-      content: [
-        { type: "text" as const, text: serializeEnvelope(result, "diviops_page_update_content") },
-      ],
-    };
+    const reservation = retain_content ? pageContentCandidates.reserve(binding, content!) : undefined;
+    if (reservation && !reservation.ok) return reply(reservation);
+    try {
+      const result = await authoringWrite(`/page/update-content/${page_id}`, "POST", body, "page_update_content", dry_run === true);
+      if (reservation?.ok && result.ok) {
+        const data = result.data;
+        if (!data || typeof data !== "object" || !("dry_run" in data) || data.dry_run !== true) {
+          return reply(candidateError("page.content_ref_unconfirmed", "Writer did not confirm a successful dry-run; no candidate retained."));
+        }
+        if (!pageContentCandidates.confirm(reservation.data.content_ref)) {
+          return reply(candidateError("page.content_ref_invalid", "Candidate expired during dry-run; run a new retained dry-run."));
+        }
+        return reply({ ok: true, data: { ...data, ...reservation.data } });
+      }
+      return reply(result);
+    } finally {
+      if (reservation?.ok) pageContentCandidates.cancel(reservation.data.content_ref);
+    }
   },
 );
 
@@ -1792,7 +1825,7 @@ registerPluginTool(
   "diviops_validate_blocks",
   {
     description:
-      "Validate Divi block markup before saving. Accepts EITHER inline `content` (string of block markup) OR `page_id` (loads `post_content` from the DB, requires edit_post capability on the page — useful for regression checks on shipped pages without round-tripping the markup blob). Provide exactly one. Checks structure (malformed comments, unknown blocks, missing builderVersion), required attributes (layout display on containers), and known pitfalls (button padding path, icon.enable, gradient enabled/positions). Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success payload is { valid: bool, total_blocks: number, errors: Finding[], warnings: Finding[] } where each Finding is { block, index, code, message, path? }. Note: shape errors detected in the markup surface as success-branch `data.errors[]` entries (NOT `validation_failed` envelopes) — the findings array is the payload, not an error. The envelope's error branch fires only for tool-level failures (`invalid_input` for neither/both supplied or invalid page_id; `forbidden` for missing edit_post; `not_found` for unknown page_id; `divi_error` for an exception in the walker).",
+      "Validate Divi block markup before saving. Accepts EITHER inline `content` (string of block markup) OR `page_id` (loads `post_content` from the DB, requires edit_post capability on the page — useful for regression checks on shipped pages without round-tripping the markup blob). Provide exactly one. Checks shared write serialization and marker integrity (literal pseudo-escapes are allowed in native Code content strings), structure (malformed comments, unknown blocks, missing builderVersion), required attributes (layout display on containers), and known pitfalls (button padding path, icon.enable, gradient enabled/positions). Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success payload is { valid: bool, total_blocks: number, errors: Finding[], warnings: Finding[] } where each Finding is { block, index, code, message, path? }. Serialization failures return valid:false with invalid_serialization findings and total_blocks:0 because the tree was not walked. Note: shape errors detected in the markup surface as success-branch `data.errors[]` entries (NOT `validation_failed` envelopes) — the findings array is the payload, not an error. The envelope's error branch fires only for tool-level failures (`invalid_input` for neither/both supplied or invalid page_id; `forbidden` for missing edit_post; `not_found` for unknown page_id; `divi_error` for an exception in the walker).",
     inputSchema: {
       content: z
         .string()
@@ -2732,22 +2765,35 @@ registerPluginTool(
   "diviops_preset_delete",
   {
     description:
-      "Delete a specific preset by ID. Use diviops_preset_audit first to verify the preset is unreferenced before deleting. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing preset_id returns code 'not_found' with a hint to diviops_preset_audit. Refuses with code 'conflict' (HTTP 409) and `error.data = { preset_id, type, module, name, reason: 'is_default' }` if the target is the registered default for its module/group bucket — clear the pointer first via diviops_preset_set_default with unset=true, or pass force=true to delete and clear the pointer in one write. The `reason` discriminator field leaves room for future conflict reasons (referenced_in_chain, etc.) without reshaping.",
+      "Delete presets by exact ID. Legacy preset_id mode checks only the bucket default, NOT references; force=true deletes a default and clears its pointer. Additive preset_ids mode accepts 1-200 unique IDs, refuses defaults, references, unknown/ambiguous IDs, stale registry and incomplete evidence; force cannot bypass these checks. Preview with dry_run:true returns an exact plan and registry_checksum; apply requires expected_registry_checksum and rescans references. Scans all post_content (including revisions/Theme Builder), postmeta, canonical preset definitions/default pointers; conservative matches refuse. Evidence limits: 10000 rows per table, 64 MiB post evidence, nesting 64; unsupported/malformed evidence refuses. Only selected records are removed, in one registry write. No content edits, normalization, transactional guarantee or automatic rollback. Keep other writers idle. Real dry_run in either mode and all exact-set calls require preset_delete_exact_v1; older/unknown plugin capability refuses before dispatch. Returns the standardized envelope; exact-set conflicts carry error.data.reason. Legacy missing IDs return not_found.",
     inputSchema: {
-      preset_id: z.string().describe("Preset ID to delete"),
+      preset_id: z.string().min(1).optional().describe("Legacy single ID; mutually exclusive with preset_ids. No reference safeguard."),
+      preset_ids: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)).min(1).max(200).optional().describe("Exact guarded selection, never name/duplicate heuristics."),
+      dry_run: z.boolean().optional().describe("True previews with zero writes; false/omitted applies. Capability-gated in both modes."),
+      expected_registry_checksum: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("Exact preview registry_checksum, required for preset_ids apply only."),
       force: z
         .boolean()
         .optional()
         .describe(
-          "When true, deletes the preset even if it is the registered default and clears the default pointer in the same write. Default false (refuse-by-default).",
+          "Legacy preset_id only: delete a default and clear its pointer. Ignored in exact-set mode; never bypasses its safeguards.",
         ),
     },
     annotations: { idempotentHint: true },
     _meta: { idempotent: "true" },
   },
-  async ({ preset_id, force }) => {
-    const body: Record<string, unknown> = { preset_id };
+  async ({ preset_id, preset_ids, force, dry_run, expected_registry_checksum }) => {
+    const exact = preset_ids !== undefined;
+    if ((preset_id !== undefined) === exact || (exact && (new Set(preset_ids).size !== preset_ids.length || (!dry_run && expected_registry_checksum === undefined))) || (!exact && expected_registry_checksum !== undefined)) {
+      return { content: [{ type: "text" as const, text: serializeEnvelope({ ok: false, error: { code: "invalid_input", message: "Supply preset_id OR 1-200 unique preset_ids; exact-set apply requires expected_registry_checksum from preview." } }, "diviops_preset_delete") }] };
+    }
+    // Never let an old handler silently ignore preview/exact-set parameters and delete.
+    if ((exact || dry_run !== undefined || expected_registry_checksum !== undefined) && (handshakeState.kind !== "ok" || handshakeState.capabilities.preset_delete_exact_v1 !== true)) {
+      return missingCapabilityEnvelope(new MissingCapabilityError("preset_delete_exact_v1", handshakeState.kind === "ok" ? handshakeState.pluginVersion : undefined), "diviops_preset_delete", { serverVersion: SERVER_VERSION });
+    }
+    const body: Record<string, unknown> = exact ? { preset_ids } : { preset_id };
     if (force !== undefined) body.force = force;
+    if (dry_run !== undefined) body.dry_run = dry_run;
+    if (expected_registry_checksum !== undefined) body.expected_registry_checksum = expected_registry_checksum;
     const result = await wp.requestEnveloped("/preset/delete", {
       method: "POST",
       body,
@@ -3332,7 +3378,7 @@ registerPluginTool(
   "diviops_tb_layout_block_insert",
   {
     description:
-      "Insert one or more serialized Divi blocks into an existing Theme Builder layout without replacing the whole layout. Target a unique parent with `parent_selector` (for example `divi/group[adminLabel=\"Legal Col\"]`, or `divi/group` only when it is unique) or an explicit zero-based `parent_path` from the parsed block tree such as `0.1.2`. `position=append|prepend` inserts as children of the target block; `position=before|after` inserts beside the target within its parent. Ambiguous selectors return ok:false with code 'invalid_input'; missing targets return 'not_found'. The route parses and validates the inserted blocks, rejects malformed pseudo-escapes such as bare `u003c`, validates the final serialized layout before saving, and returns a no-op when the exact requested block sequence already exists at the insertion point." +
+      "Insert one or more serialized Divi blocks into an existing Theme Builder layout without replacing the whole layout. Target a unique parent with `parent_selector` (for example `divi/group[adminLabel=\"Legal Col\"]`, or `divi/group` only when it is unique) or an explicit zero-based `parent_path` from the parsed block tree such as `0.1.2`. `position=append|prepend` inserts as children of the target block; `position=before|after` inserts beside the target within its parent. Ambiguous selectors return ok:false with code 'invalid_input'; missing targets return 'not_found'. The route parses and validates the inserted blocks, rejects malformed serialization (literal pseudo-escapes such as bare `u003c` are allowed in native Code content strings), validates the final serialized layout before saving, and returns a no-op when the exact requested block sequence already exists at the insertion point." +
       DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       layout_id: z.number().int().describe("Theme Builder layout post ID to mutate"),

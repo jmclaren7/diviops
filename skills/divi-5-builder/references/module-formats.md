@@ -380,10 +380,10 @@ or infer a new swipe default from the new UI. Old-dot preservation and explicit
 new-swipe authoring need separate runtime/VB checks; neither was performed for
 this source adoption. Other Slider-family modules are outside this evidence.
 
-## Divi 5.13 fixture provenance
+## Previous Divi 5.13 fixture provenance
 
-The cached 89-module fixture is a static source projection for the exact adopted
-Divi 5.13 package, not a live schema capture. Five public module records are
+The 89-module baseline fixture was a static source projection for the adopted
+Divi 5.13 package, not a live schema capture. Five public module records were
 refreshed from vendor metadata, together with the Divi version and preset-map
 hash. It preserves `schema_get_module` / dump-all's six fields and PHP array
 serialization, existing registration defaults, WordPress boilerplate and the
@@ -393,13 +393,24 @@ projection does not verify locale, registration filters, conditional providers
 or runtime/VB behavior; earlier version-specific proofs above are not promoted
 to 5.13.
 
+## Divi 5.13.1 Source Notes
+
+Source-verified 2026-09-25 against the pinned 5.13.1 package, not runtime or
+Builder-save acceptance. The current static fixture updates 16 records while
+retaining all 89 records and the unchanged preset-map hash; generated paths and
+tiers remain unchanged.
+
+- **Blurb alignment:** migration prefers existing nonempty native `imageIcon.decoration.sizing.<breakpoint>.<state>.alignSelf`, then sizing `alignment`, then legacy `imageIcon.advanced.alignment`. Legacy left/center/right maps to `flex-start`/`center`/`end`. Preserve native values; do not assume already-migrated records rerun migration or desktop values receive the old explicit smaller-breakpoint fallback. Preset precedence and responsive inheritance remain native-save test targets.
+- **Icon inheritance:** the printed desktop `alignSelf: "center"` default was removed, not the attribute. Check omitted alignment and desktop-side-to-mobile-center inheritance before relying on them.
+- **Button test target, not proven regression:** transforms now target anchors while native button elements remain supported. Check transforms and child placement for both element types before claiming compatibility or adding a workaround. No existing workaround is retired by this source review.
+
 <!-- BEGIN GENERATED:header -->
 
 ## Generated path index
 
 > Generated mechanically by `diviops-server/scripts/regen-module-formats.mjs` from `diviops_schema_get_module` dump-all output. Each module block lives between `BEGIN GENERATED:module:divi/<slug>` / `END GENERATED:module:divi/<slug>` HTML-comment sentinels (see `diviops-server/CONTRIBUTING.md` for the full convention). Do **not** edit between sentinels — edits are clobbered on regen.
 
-> Generated against Divi `5.13`, schema `4ae1b5c87949…`.
+> Generated against Divi `5.13.1`, schema `4ae1b5c87949…`.
 
 Per CLAUDE.md "Suite architecture coherence": schema dump is the canonical index; VB-verified prose above is the canonical interpretation. The two sections are complementary, not competing — prose explains surprises, this index enumerates paths exhaustively. On conflicts, the prose above wins (per `feedback_vb_first_verification`).
 

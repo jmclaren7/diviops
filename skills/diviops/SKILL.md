@@ -91,6 +91,8 @@ When `dry_run: true`, the tool does not mutate state. The success envelope carri
 
 Apply mode (`dry_run` omitted or `false`) keeps each tool's namespace-specific success-payload shape unchanged.
 
+`preset_delete` previews require affirmative plugin capability `preset_delete_exact_v1`. Older handlers ignore `dry_run` and delete; never forward a preview to them. MCP refuses dry-run/exact-set parameters on old or capability-unverified plugins. Guarded `preset_ids` apply additionally requires `expected_registry_checksum` from the reviewed preview, even when `dry_run` is omitted.
+
 **Exceptions** — two passthrough surfaces do not accept `dry_run`:
 
 - `diviops_meta_wp_cli` — raw passthrough; use explicit read-only commands instead.
@@ -108,7 +110,8 @@ A tool is idempotent when running it twice produces the same observable state as
 - **`annotations.idempotentHint: true`** on the tool registration is the lighter signal — declares the tool is intended idempotent without machine-checked guarantees. Useful for callers that want to retry safely without re-confirming.
 - **Destructive ops on already-destructed targets** return `ok: true` with `data.already_<state>: true`, NOT `409 conflict`. `page_trash` on an already-trashed page returns `{ ok: true, data: { already_trashed: true } }`; `tb_template_trash` default mode is similarly silent-success on already-clean. The signal is preserved in the `already_<state>` flag for callers that need it. Repeat-safe semantics matter for AI agent retries.
 - **Same-status no-op updates** return `ok: true` with `data.noop: true`. `page_update_status` against a post already in the target status, for example.
-- **`force=true` override** — for `*_delete` tools whose default mode refuses on live-reference conflicts (`variable_delete`, `global_color_delete`, `global_font_delete`, `preset_delete`), passing `force=true` clears the conflict and proceeds. Orphan refs remain; run the corresponding `*_scan_orphans` tool to clean up afterward.
+- **`force=true` override** — for `*_delete` tools whose default mode refuses on live-reference conflicts (`variable_delete`, `global_color_delete`, `global_font_delete`), passing `force=true` clears the conflict and proceeds. Orphan refs remain; run the corresponding `*_scan_orphans` tool to clean up afterward.
+- **Preset deletion is mode-specific:** legacy `preset_id` checks only the bucket default, not references; `force=true` deletes and clears that default pointer. Guarded `preset_ids` refuses defaults, references, stale registry and incomplete evidence with no force bypass. Legacy repeats return `not_found`; checksum-bound exact-set repeats refuse stale state without another write.
 
 These conventions are documentation discipline, not runtime enforcement. The plugin doesn't reject a non-idempotent retry; it just guarantees the documented shape when retry is safe.
 
