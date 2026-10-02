@@ -38,6 +38,7 @@ paid workflow prerequisite.
 - **Repeated components:** Compare icon-to-heading and heading-to-body gaps across every repeated group and nearby related content. Check divider presence, thickness, rendered width, horizontal insets, color and space above/below; parent gaps can compound with internal spacing.
 - **Reference consistency:** Compare recurring font size/weight/color, button geometry/states and eyebrow treatment with the approved page, not just semantic tags or preset names. Keep a difference only when it serves the agreed hierarchy; do not impose a universal style recipe.
 - **New links:** Inspect the actual new anchor in normal and hover states, including typography, color/decoration and alignment within its container. A correct href or paragraph style readback does not show that a link has the intended treatment; check inherited body typography and paragraph alignment explicitly.
+- **Expandable content:** For FAQs intended to fill their container, compare wrapper and Toggle widths with all answers closed, a short answer open and the longest answer open, at desktop/phone (and distinct tablet layouts). Check wrapping and overflow too; keyboard behavior, block validation and a successful Builder save do not establish width stability. See [centered FAQ sizing](#centered-faq-groups-and-intrinsic-width).
 
 Report structural validation/persisted readback separately from visual acceptance.
 When authorized, inspect rendered desktop/phone output (plus tablet when it has
@@ -160,6 +161,36 @@ Desktop multi-column Groups must include explicit phone stacking. Block validati
 - Parent Group phone layout: `display: "flex"`, `flexDirection: "column"`, `alignItems: "stretch"`, and a sensible `rowGap`.
 - Child card Groups phone sizing: `module.decoration.sizing.phone.value.flexType = "24_24"`; add `width: "100%"` and `maxWidth: "100%"` when the card also carries width or max-width constraints.
 - Verify the saved page in a mobile viewport after `diviops_validate_blocks` passes. Do not treat validator success as responsive acceptance.
+
+### Centered FAQ Groups and intrinsic width
+
+A native FAQ Group with automatic width inside a flex-column parent using
+`alignItems: "center"` can shrink to its content and grow when an answer opens.
+Setting each child Toggle to `width: "100%"` does not make that ancestor Group
+fill the parent. Inspect the wrapper's own sizing before changing its children.
+
+When the intended design is a full-width FAQ within an already constrained
+Column, set the **FAQ Group's** `module.decoration.sizing.desktop.value`:
+
+```json
+{"width": "100%", "maxWidth": "100%"}
+```
+
+Keep the parent width constraint and each Toggle's existing full-width sizing;
+check tablet/phone overrides rather than assuming desktop values win everywhere.
+Use a page-local native correction, not shared-preset/default changes or CSS/JS
+workarounds. This is not the fractional `flexType` card-grid case above.
+Intentionally compact, content-sized Groups remain valid: do not force every
+centered Group to full width or classify automatic width alone as an error.
+
+Retained Divi 5.11.0 authoring evidence:
+the closed FAQ wrapper was 511.09px inside an 860px Column and expanded with a
+long answer. After the native wrapper correction, all five Toggles remained
+860px on desktop and 342px at a 390px phone viewport across closed/open states,
+without horizontal overflow. These are example measurements, not universal size
+targets. The initial Builder-save check preceded that correction; report native
+edit/save evidence separately from frontend width checks. This guidance update
+uses retained evidence and does not claim a new runtime or compact-control test.
 
 ### Column sizing reference <!-- VB-verified: 2026-03-21 -->
 

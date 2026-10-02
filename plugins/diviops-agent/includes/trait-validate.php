@@ -38,6 +38,26 @@ trait DiviOps_Agent_Validate {
 		$content = $resolved;
 
 		try {
+			// Match full-content write preflight before the forgiving WP parser
+			// can recover malformed JSON or an unbalanced marker sequence.
+			$normalized = self::normalize_divi_full_content_for_write( $content );
+			$integrity = ! empty( $normalized['ok'] )
+				? self::assert_divi_full_content_safe_for_write( $normalized['content'] )
+				: null;
+			if ( empty( $normalized['ok'] ) || is_wp_error( $integrity ) ) {
+				return self::envelope_success( [
+					'valid'        => false,
+					'total_blocks' => 0,
+					'errors'       => [ [
+						'block'   => $normalized['error']['block'] ?? '(markup)',
+						'index'   => 0,
+						'code'    => 'invalid_serialization',
+						'message' => $normalized['error']['message'] ?? $integrity->get_error_message(),
+					] ],
+					'warnings'     => [],
+				] );
+			}
+			$content = $normalized['content'];
 			$blocks   = parse_blocks( $content );
 			$registry = WP_Block_Type_Registry::get_instance();
 

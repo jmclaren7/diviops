@@ -42,13 +42,15 @@ trait DiviOps_Agent_Core {
 	 * comment JSON must use serialize_block_attributes() escaping for unsafe
 	 * bytes such as `<`, `>`, `&`, `--`, backslashes, and escaped quotes. This
 	 * guard accepts raw HTML and canonical JSON escapes, rejects pseudo-escapes
-	 * like `u003c`, then rewrites Divi block opener attrs canonically.
+	 * like `u003c` outside native Code content strings, then rewrites Divi block
+	 * opener attrs canonically. Code strings still require valid JSON and safe
+	 * comment delimiters; their literal documentation is not repaired or decoded twice.
 	 *
 	 * @param string $content Full block markup.
 	 * @return array{ok:bool,content?:string,changed?:int,error?:array}
 	 */
 	private static function normalize_divi_full_content_for_write( string $content ): array {
-		$pattern = '/<!--\s+(\/)?wp:([A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)(.*?)(\/)?-->/s';
+		$pattern = '/<!--\s+(\/)?wp:([A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)(.*?)-->/s';
 		$changed = 0;
 		$error   = null;
 
@@ -67,13 +69,10 @@ trait DiviOps_Agent_Core {
 					return $matches[0];
 				}
 
-				// The canonical ` /-->` self-close slash lands in group 4 (it sits
-				// immediately before `-->`); a whitespace-separated `/ -->` variant
-				// leaves the slash at the end of the lazy tail instead. Honor both,
-				// or every self-closing block re-serializes as an opener and the
-				// block tree scrambles (openers > closers).
+				// Detect both ` /-->` and `/ -->` from the tail. An optional slash
+				// regex branch retries at every byte in large Code attrs.
 				$trimmed_tail    = trim( $tail );
-				$is_self_closing = ! empty( $matches[4] );
+				$is_self_closing = false;
 				if ( '' !== $trimmed_tail && '/' === substr( $trimmed_tail, -1 ) ) {
 					$is_self_closing = true;
 					$trimmed_tail    = rtrim( substr( $trimmed_tail, 0, -1 ) );
@@ -92,17 +91,6 @@ trait DiviOps_Agent_Core {
 					return $matches[0];
 				}
 
-				$pseudo_escape = self::find_malformed_block_attr_escape( $trimmed_tail );
-				if ( null !== $pseudo_escape ) {
-					$error = [
-						'message' => 'Divi block attributes contain a malformed JSON unicode escape.',
-						'block'   => $block,
-						'escape'  => $pseudo_escape,
-						'hint'    => 'Use canonical JSON escapes like \\u003c or raw HTML that can be normalized, not u003c without the backslash.',
-					];
-					return $matches[0];
-				}
-
 				// Decode WITHOUT assoc: PHP's assoc decode collapses empty JSON
 				// objects to empty arrays, so a re-encode mutates `"decoration":{}`
 				// into `"decoration":[]`. stdClass round-trips object/array
@@ -114,6 +102,17 @@ trait DiviOps_Agent_Core {
 						'block'      => $block,
 						'json_error' => json_last_error_msg(),
 						'preview'    => substr( $trimmed_tail, 0, 120 ),
+					];
+					return $matches[0];
+				}
+
+				$pseudo_escape = self::find_malformed_block_attr_escape( $trimmed_tail, $block );
+				if ( null !== $pseudo_escape ) {
+					$error = [
+						'message' => 'Divi block attributes contain a malformed JSON unicode escape.',
+						'block'   => $block,
+						'escape'  => $pseudo_escape,
+						'hint'    => 'Use canonical JSON escapes like \\u003c or raw HTML that can be normalized. Literal pseudo-escapes are allowed only in native Code content strings.',
 					];
 					return $matches[0];
 				}
@@ -272,7 +271,12 @@ trait DiviOps_Agent_Core {
 	 */
 	private static function divi_content_marker_counts( string $content ): array {
 		$openers      = preg_match_all( '/<!--\s+wp:divi\//', $content );
-		$self_closers = preg_match_all( '/<!--\s+wp:divi\/(?:(?!-->).)*?\/-->/s', $content );
+		// Scan to the first terminator without per-byte lookahead repetition:
+		// large Code docs otherwise exhaust PCRE's JIT stack.
+		preg_match_all( '/<!--\s+wp:divi\/(.*?)-->/s', $content, $comments );
+		$self_closers = count( array_filter( $comments[1] ?? [], static function ( $tail ) {
+			return '/' === substr( $tail, -1 );
+		} ) );
 		$closers      = preg_match_all( '/<!--\s+\/wp:divi\//', $content );
 
 		return [
@@ -291,7 +295,7 @@ trait DiviOps_Agent_Core {
 	 */
 	private static function validate_divi_marker_sequence( string $content ): array {
 		$matched = preg_match_all(
-			'/<!--\s+(\/)?wp:divi\/([A-Za-z0-9_-]+)(?:(?!-->).)*?(\/)?-->/s',
+			'/<!--\s+(\/)?wp:divi\/([A-Za-z0-9_-]+).*?-->/s',
 			$content,
 			$matches,
 			PREG_SET_ORDER | PREG_OFFSET_CAPTURE
@@ -306,7 +310,7 @@ trait DiviOps_Agent_Core {
 			$offset     = $match[0][1];
 			$is_closer  = ! empty( $match[1][0] );
 			$type       = (string) $match[2][0];
-			$self_close = ! $is_closer && ! empty( $match[3][0] );
+			$self_close = ! $is_closer && '/-->' === substr( $token, -4 );
 
 			if ( $self_close ) {
 				continue;
@@ -454,10 +458,30 @@ trait DiviOps_Agent_Core {
 	/**
 	 * Detect HTML-ish unicode pseudo-escapes missing their required backslash.
 	 *
-	 * @param string $json Raw block attribute JSON.
+	 * @param string $json  Valid block attribute JSON.
+	 * @param string $block Block name.
 	 * @return string|null
 	 */
-	private static function find_malformed_block_attr_escape( string $json ): ?string {
+	private static function find_malformed_block_attr_escape( string $json, string $block ): ?string {
+		if ( 'divi/code' === $block ) {
+			// Mask only native content strings in a separate decoded copy. All
+			// surrounding attrs and malformed content shapes retain the heuristic.
+			$scan_attrs = json_decode( $json );
+			$inner = $scan_attrs->content->innerContent ?? null;
+			if ( is_object( $inner ) ) {
+				foreach ( $inner as $breakpoint ) {
+					if ( ! is_object( $breakpoint ) ) {
+						continue;
+					}
+					foreach ( [ 'value', 'hover', 'sticky' ] as $state ) {
+						if ( isset( $breakpoint->$state ) && is_string( $breakpoint->$state ) ) {
+							$breakpoint->$state = '';
+						}
+					}
+				}
+				$json = json_encode( $scan_attrs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+			}
+		}
 		if ( preg_match( '/(?<!\\\\)u00(?:3c|3e|26|22|5c|2d)/i', $json, $match ) ) {
 			return $match[0];
 		}

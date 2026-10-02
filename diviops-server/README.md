@@ -8,7 +8,38 @@ The Node.js MCP server inside the DiviOps harness. It gives Claude Code, Codex, 
 Claude Code <-> MCP Server (stdio) <-> WordPress REST API <-> DiviOps Agent plugin
 ```
 
-## 1.5.54 candidate release note
+## 1.5.55 candidate release note
+
+With Free 1.5.27, preset deletion supports real dry-run previews and guarded
+`preset_ids` exact-set apply through `preset_delete_exact_v1`. Review the preview
+and pass its registry checksum on apply; bounded reference checks run again.
+Defaults, references and incomplete evidence refuse even with force. Legacy
+single-ID deletion retains its default-only guard, without reference checks.
+MCP refuses new safety parameters on old or capability-unverified handlers.
+These checks are point-in-time, not a transaction or automatic rollback.
+
+Native Code content strings may contain literal pseudo-escapes; shared validation
+and write serialization checks still require valid JSON and block delimiters.
+Free 1.5.27 also fixes uncached reads/readback of valid empty page content.
+
+`diviops_page_update_content` can retain a successful reviewed dry-run using
+`retain_content:true`; apply with `content_ref` instead of resending `content`,
+keeping the same target, expected checksum and backup intent. References are
+memory-only, MCP-process-local and one-use, expire five minutes from reservation,
+and are limited to eight candidates, 2 MiB each and 8 MiB total. They are consumed
+before apply checks/dispatch, even on failed or uncertain apply: inspect the
+target and review a new dry-run instead of automatically retrying. Existing write
+checks still run. Retention is not approval, a backup, cross-client isolation or
+a reduction in content sent from MCP to WordPress. Direct-content calls remain.
+
+Public builder companion 1.4.8 carries exact-ID deletion and retained-content
+guidance, stable native FAQ wrapper sizing, and source-qualified Divi 5.13.1
+generated guidance. Dependencies and compatibility floors are unchanged.
+This is source preparation only: local source evidence does not qualify these
+packages or establish that staging has the fixes. Package validation, runtime
+adoption and publication require separate authorization.
+
+## Previous 1.5.54 candidate release note
 
 Adds optional `bounded:true` to `diviops_page_get` for UTF-8-safe raw content
 chunks of at most 4096 bytes, with a full-page checksum and byte-offset
@@ -527,6 +558,8 @@ Every write tool accepts `dry_run: boolean` (default `false`). When `true`, the 
 ```
 
 `meta_wp_cli` and `scf_import` do not accept `dry_run` (raw passthrough / upstream gap respectively). `scf_sync` passes `dry_run` through to upstream `wp scf json sync --dry-run`, so its preview is the upstream plain-text summary rather than a plugin-built `data.plan`. For bulk preview-then-commit flows (preset reassign, preset cleanup), see [safety-patterns.md](../docs/safety-patterns.md).
+
+Preset deletion requires `preset_delete_exact_v1` for real dry-run or guarded `preset_ids` (1-200 exact IDs). Preview returns a registry checksum; exact-set apply requires it and rechecks defaults/references across all post content, postmeta and canonical preset definitions. Incomplete evidence refuses, and force cannot bypass exact-set checks. Legacy `preset_id` remains default-guard-only, with its existing force override. MCP never forwards new safety parameters to old or capability-unverified handlers, which could otherwise ignore `dry_run` and delete. See [coverage, limits and nontransactional semantics](../docs/safety-patterns.md#exact-set-preset-deletion).
 
 Selected guarded post-content write tools also accept `backup: true`. In apply
 mode the Free plugin stores an option-backed rollback snapshot before writing
