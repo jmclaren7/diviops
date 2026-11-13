@@ -5,8 +5,9 @@
 #
 # Writes diviops-agent.zip, diviops-design-library.zip, SHA256SUMS and
 # release-notes.md to the output directory. Fails if a plugin's version header
-# disagrees with the other place that version is recorded. Under GitHub Actions
-# it also sets the step outputs agent_version, visuals_version and tag.
+# disagrees with its class VERSION constant, or the Agent's with readme.txt's
+# Stable tag. Under GitHub Actions it also sets the step outputs agent_version,
+# visuals_version and tag.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -24,14 +25,24 @@ header_version() {
 	sed -n 's/^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*//p' "$1" | head -n 1 | tr -d '\r[:space:]'
 }
 
+# The plugin class's runtime "const VERSION = '...';".
+const_version() {
+	sed -n "s/^[[:space:]]*const VERSION = '\([^']*\)';.*/\1/p" "$1" | head -n 1
+}
+
 agent=$(header_version "$agent_php")
+agent_const=$(const_version "$agent_php")
 stable=$(sed -n 's/^Stable tag:[[:space:]]*//p' "$agent_readme" | head -n 1 | tr -d '\r[:space:]')
 visuals=$(header_version "$visuals_php")
-visuals_const=$(sed -n "s/^[[:space:]]*const VERSION = '\([^']*\)';.*/\1/p" "$visuals_php" | head -n 1)
+visuals_const=$(const_version "$visuals_php")
 
 fail=0
 if [ -z "$agent" ] || [ -z "$visuals" ]; then
 	echo "::error::Could not read a plugin Version header (agent='$agent', visuals='$visuals')." >&2
+	fail=1
+fi
+if [ "$agent" != "$agent_const" ]; then
+	echo "::error file=plugins/diviops-agent/diviops-agent.php::VERSION constant '$agent_const' does not match the DiviOps Agent header version '$agent'." >&2
 	fail=1
 fi
 if [ "$agent" != "$stable" ]; then
