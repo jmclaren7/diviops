@@ -47,7 +47,7 @@ not to let the assistant guess native Divi markup.
 ## Step 1: Install the WordPress Plugin
 
 1. Go to **WP Admin → Plugins → Add New**, search for **DiviOps Agent**, install it, and activate it.
-2. For a manual alternative, download [diviops-agent.zip](diviops-agent.zip) from this distribution and upload it via **WP Admin → Plugins → Add New → Upload Plugin** and activate it.
+2. For a manual alternative, download [diviops-agent.zip](https://github.com/jmclaren7/diviops/releases/latest/download/diviops-agent.zip) from this distribution and upload it via **WP Admin → Plugins → Add New → Upload Plugin** and activate it.
 3. Confirm **DiviOps Agent** is active in Plugins. The [connection check](#step-5-test-connection) below verifies the selected target after client setup.
 
 > **If Divi is not active**, authenticated requests return `503 divi_unavailable`. Unauthenticated requests return 401 first.
@@ -58,7 +58,7 @@ WordPress delivers Free plugin updates through **Dashboard → Updates** and **P
 
 For a manual fallback, replace the plugin ZIP through WordPress admin:
 
-1. Download [diviops-agent.zip](diviops-agent.zip) from the selected distribution
+1. Download [diviops-agent.zip](https://github.com/jmclaren7/diviops/releases/latest/download/diviops-agent.zip) from the selected distribution
 2. Go to **WP Admin → Plugins → Add New → Upload Plugin**
 3. Upload the new `diviops-agent.zip`
 4. When WordPress asks, choose **Replace current with uploaded**
@@ -442,7 +442,7 @@ If FluentCart and FluentCart Pro are active on the target site, `diviops_meta_in
 
 For CSS entrance animations (`ddl-fade-up`, `ddl-scale-in`), gradient text effects, and Three.js WebGL shaders:
 
-1. Download [diviops-design-library.zip](diviops-design-library.zip) from this distribution
+1. Download [diviops-design-library.zip](https://github.com/jmclaren7/diviops/releases/latest/download/diviops-design-library.zip) from this distribution
 2. Upload and activate in **WP Admin → Plugins → Add New → Upload Plugin**
 
 This is optional — the MCP agent works without it. DiviOps Visuals is the Free

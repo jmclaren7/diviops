@@ -1,6 +1,6 @@
 # Fork notes
 
-`jmclaren7/diviops` is a fork of DiviOps that tracks upstream and adds a small set of changes. The DiviOps Agent's module schema tools also discover third-party Divi 5 add-on modules (Divi Supreme, Divi Torque, Squad Modules and others). The Claude plugin ships its own MCP server build, so it runs the fork's server code instead of the npm release. The fork also has its own identity: the marketplace is `jcs-diviops`, both WordPress plugins set `Update URI: false`, and the URLs point at the fork. That way it installs alongside upstream and WordPress.org releases can't overwrite it. Everything else follows upstream.
+`jmclaren7/diviops` is a fork of DiviOps that tracks upstream and adds a small set of changes. The DiviOps Agent's module schema tools also discover third-party Divi 5 add-on modules (Divi Supreme, Divi Torque, Squad Modules and others). The Claude plugin ships its own MCP server build, so it runs the fork's server code instead of the npm release. The fork also has its own identity: the marketplace is `jcs-diviops`, both WordPress plugins set `Update URI: false`, and the URLs point at the fork. That way it installs alongside upstream and WordPress.org releases can't overwrite it. The WordPress plugin zips are published as GitHub releases instead of being committed. Everything else follows upstream.
 
 ## Upstream
 
@@ -19,6 +19,7 @@
    - Why: a WordPress.org release must not replace the fork build.
    - What: version `1.5.50.1` (upstream version + `.1`), `Update URI: false`, a fork note in the description, and a fork changelog entry.
    - Files: `plugins/diviops-agent/diviops-agent.php`, `plugins/diviops-agent/readme.txt`, `plugins/diviops-agent/changelog.txt`
+   - Bumping this version publishes a release (change 6).
 3. **schema_get_module description for bare add-on names**
    - Why: tells agents what the fork's plugin accepts (see change 1).
    - Files: `diviops-server/src/index.ts`
@@ -28,10 +29,14 @@
    - Files: `.claude-plugin/plugin.json`, `README.md`, `diviops-server/package.json`, `diviops-server/.gitignore`, `diviops-server/bundle/diviops-mcp.mjs` (generated)
 5. **Fork identity at runtime**
    - Why: if upstream's `diviops` marketplace was added earlier, adding the fork under the same name fails, and the Visuals plugin needs the same update protection as the Agent.
-   - What: marketplace renamed to `jcs-diviops` (owner jmclaren7). Claude plugin version `1.4.16`, kept ahead of upstream's `1.4.15`. DiviOps Visuals (design library) is `1.0.0-beta.26.1` with `Update URI: false`. Plugin URI, plugin.json and package.json URLs point at the fork. `meta_wp_cli`'s WP_PATH hint no longer points users at the npm release. The root plugin zips are rebuilt from the fork's sources.
-   - Files: `.claude-plugin/marketplace.json`, `.claude-plugin/plugin.json`, `README.md`, `diviops-server/package.json`, `diviops-server/src/index.ts`, `plugins/diviops-agent/diviops-agent.php`, `plugins/diviops-design-library/diviops-design-library.php`, `diviops-agent.zip`, `diviops-design-library.zip` (generated)
+   - What: marketplace renamed to `jcs-diviops` (owner jmclaren7). Claude plugin version `1.4.16`, kept ahead of upstream's `1.4.15`. DiviOps Visuals (design library) is `1.0.0-beta.26.1` with `Update URI: false`. Plugin URI, plugin.json and package.json URLs point at the fork. `meta_wp_cli`'s WP_PATH hint no longer points users at the npm release.
+   - Files: `.claude-plugin/marketplace.json`, `.claude-plugin/plugin.json`, `README.md`, `diviops-server/package.json`, `diviops-server/src/index.ts`, `plugins/diviops-agent/diviops-agent.php`, `plugins/diviops-design-library/diviops-design-library.php`
+6. **Plugin zips published as releases, not committed**
+   - Why: committed zips go stale whenever the plugin sources change, and upstream rewrites them every release, so they conflicted on every rebase. The fork never used its copies of upstream's desktop skill zips (README and SETUP link to upstream's), and `diviops-divi-5-desktop.zip` lacked the fork's add-on section anyway.
+   - What: all four root zips are deleted, and `/*.zip` and `/dist/` are ignored. On every push to `main`, `.github/workflows/release-plugins.yml` runs `.github/scripts/build-plugin-zips.sh`. If no release exists yet for the tag `agent-v<Agent version>_visuals-v<Visuals version>`, it publishes one marked latest, with `diviops-agent.zip`, `diviops-design-library.zip`, `SHA256SUMS` and the newest Agent changelog entry. Bumping either plugin's version makes a new release; any other push does nothing. The build fails if either plugin's header version doesn't match its class `VERSION` constant, or the Agent's doesn't match `Stable tag` in `readme.txt`. Pull requests only build the zips and attach them to the run. README and SETUP install links point at `releases/latest/download/<zip>`. Desktop skill zips aren't built, so Desktop chat users get upstream's skill without the add-on section.
+   - Files: `.github/workflows/release-plugins.yml`, `.github/scripts/build-plugin-zips.sh`, `.gitignore`, `README.md`, `SETUP.md`; deleted `diviops-agent.zip`, `diviops-design-library.zip`, `diviops-desktop.zip`, `diviops-divi-5-desktop.zip`
 
-Generated files (`diviops-server/bundle/diviops-mcp.mjs`, `diviops-agent.zip`, `diviops-design-library.zip`) are never hand-merged. Rebuild them after each rebase: run `npm ci && npm run bundle` in `diviops-server/`, then zip `plugins/diviops-agent` and `plugins/diviops-design-library` from `plugins/`, sorted and with no extra fields. Upstream's desktop skill zips (`diviops-desktop.zip`, `diviops-divi-5-desktop.zip`) are taken from upstream unchanged.
+The generated file `diviops-server/bundle/diviops-mcp.mjs` is never hand-merged. Rebuild it after each rebase with `npm ci && npm run bundle` in `diviops-server/`. Upstream updates the root zips in most releases, so a rebase usually stops on them as modify/delete conflicts; resolve each with `git rm <zip>`. To release, bump a plugin version and push to `main`. To build the zips locally, run `.github/scripts/build-plugin-zips.sh` (output goes to `dist/`).
 
 ## Superseded changes
 

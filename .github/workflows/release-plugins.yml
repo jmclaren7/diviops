@@ -1,0 +1,71 @@
+name: Release WordPress plugins
+
+# Builds the DiviOps Agent and DiviOps Visuals zips from plugins/.
+# On main, publishes them as a GitHub release, once per pair of plugin
+# versions: bumping either plugin's version makes a new release, and any other
+# push finds the release already there and does nothing.
+# Pull requests only build the zips and attach them to the run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-plugins-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      agent_version: ${{ steps.build.outputs.agent_version }}
+      visuals_version: ${{ steps.build.outputs.visuals_version }}
+      tag: ${{ steps.build.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build plugin zips
+        id: build
+        run: bash .github/scripts/build-plugin-zips.sh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-zips
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: plugin-zips
+          path: dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+          AGENT: ${{ needs.build.outputs.agent_version }}
+          VISUALS: ${{ needs.build.outputs.visuals_version }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to publish."
+            exit 0
+          fi
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "DiviOps Agent $AGENT / DiviOps Visuals $VISUALS" \
+            --notes-file dist/release-notes.md \
+            --latest \
+            dist/diviops-agent.zip dist/diviops-design-library.zip dist/SHA256SUMS
