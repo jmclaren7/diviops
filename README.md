@@ -51,11 +51,11 @@ Each example explains the implementation and review steps. External research ser
 
 | Component | Role | Where to find it |
 |---|---|---|
-| **DiviOps Agent** WordPress plugin | WordPress-side tools for supported Divi page operations, validation, presets and other site operations | `diviops-agent.zip` at the repo root |
+| **DiviOps Agent** WordPress plugin | WordPress-side tools for supported Divi page operations, validation, presets and other site operations | `diviops-agent.zip` from the fork's [latest release](https://github.com/jmclaren7/diviops/releases/latest) |
 | **`@diviops/mcp-server`** | Connects MCP clients to the WordPress plugin | `npx -y --package @diviops/mcp-server diviops-mcp` |
 | **`diviops-divi-5`** Free skill | Native block formats, Tier 1 attribute guidance, design patterns and tool references | `skills/diviops-divi-5/`; see [skill installation](#4-load-the-diviops-divi-5-skill) |
 | **`diviops`** harness primer | Shared conventions for the connected agent workflow | `skills/diviops/` |
-| **DiviOps Visuals** (`diviops-design-library`) plugin | Optional visual effects, including CSS animations, gradients, glass effects and Three.js shaders | `diviops-design-library.zip` at the repo root |
+| **DiviOps Visuals** (`diviops-design-library`) plugin | Optional visual effects, including CSS animations, gradients, glass effects and Three.js shaders | `diviops-design-library.zip` from the fork's [latest release](https://github.com/jmclaren7/diviops/releases/latest) |
 
 Core SCF MCP tools are Free. Pro adds extended Divi guidance, the deeper SCF skill guide and supported paid workflows through the separate Pro plugin. **Pro packages are not included in this public Free repository.** See [Free vs Pro](#free-vs-pro) or [compare plans](https://diviops.com/pricing/).
 
@@ -72,7 +72,7 @@ troubleshooting, see [SETUP.md](SETUP.md).
 
 ### 1. Install the WordPress plugin
 
-Upload **`diviops-agent.zip`** (at the root of this repo) via **WP Admin → Plugins → Add New → Upload Plugin**, then activate it. Requires Divi 5.1+ on WordPress 6.5+.
+Upload **`diviops-agent.zip`** (from the fork's [latest release](https://github.com/jmclaren7/diviops/releases/latest/download/diviops-agent.zip)) via **WP Admin → Plugins → Add New → Upload Plugin**, then activate it. Requires Divi 5.1+ on WordPress 6.5+.
 
 Verify: visit `http://your-site.local/wp-json/diviops/v1/schema/settings` — you should get a 401 (auth required).
 
@@ -161,7 +161,7 @@ claude plugin marketplace add jmclaren7/diviops
 claude plugin install divi-5-builder@jcs-diviops
 ```
 
-If upstream's `divi-5-builder@diviops` is also installed, uninstall it (`claude plugin uninstall divi-5-builder@diviops`) so the skills and tools aren't loaded twice. Both WordPress plugins in this fork set `Update URI: false`, so WordPress.org releases never replace them. Update them by uploading the fork's builds.
+If upstream's `divi-5-builder@diviops` is also installed, uninstall it (`claude plugin uninstall divi-5-builder@diviops`) so the skills and tools aren't loaded twice. Both WordPress plugins in this fork set `Update URI: false`, so WordPress.org releases never replace them. Update them by uploading the zips from the fork's [releases](https://github.com/jmclaren7/diviops/releases).
 
 The plugin runs `diviops-server/bundle/diviops-mcp.mjs`, a self-contained build with no `npm install` step. After changing anything under `diviops-server/src/`, rebuild and commit it with `cd diviops-server && npm run bundle`, and bump `version` in `.claude-plugin/plugin.json` so installed copies update.
 

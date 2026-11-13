@@ -1,0 +1,3 @@
+# Plugin zips are published as GitHub releases, not committed (see FORK.md).
+/*.zip
+/dist/
