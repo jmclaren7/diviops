@@ -6,18 +6,18 @@
 
 - URL: https://github.com/oaris-dev/diviops
 - Tracked branch: `main`
-- Last rebase: 2026-11-11, onto `407a9b09d99b32eb003fe33d11cc9bf2a73dcab2` ("chore: sync MCP 1.5.76 and Free 1.5.50 checksum guards")
-- Update method: the fork's commits are rebased onto upstream `main`. Backups are kept as `rebase-backup` and `rebase-backup-YYYY-MM-DD` (newest 3).
+- Last rebase: 2026-11-27, onto `ff42c4b8dbf7feeba007b66999ef7d5b9cd13bd0` ("Sync from dev repo: 2715a7c")
+- Update method: the fork's commits are rebased onto upstream `main`. Before each rebase the old `main` is pushed to `rebase-backup-YYYY-MM-DD`; only the 2 newest dated backups are kept. The undated `rebase-backup` branch is an older backup (fork tip before the 2026-11-11 rebase).
 
 ## Active changes
 
-1. **Add-on module discovery in schema tools** (adapted 2026-11-11)
+1. **Add-on module discovery in schema tools** (adapted 2026-11-11; kept 2026-11-27)
    - Why: without it, agents couldn't see modules that add-ons register under their own block namespaces, or get their schemas.
    - What: `schema_list_modules` tags every module with `source` (`divi` | `addon`) and `namespace`. A module counts if upstream's `is_supported_divi_module()` accepts it (core, or registered through Divi's own extension registration). It also counts if its namespace is on the allowlist (extend it with `DIVIOPS_AGENT_MODULE_NAMESPACES` or the `diviops_agent_module_namespaces` filter), or if it declares a Divi 5 module category (turn that off with `diviops_agent_detect_modules_by_category`). `core/*` blocks never count. `schema_get_module` resolves bare add-on names and returns `conflict` with candidates when a name is ambiguous. `validate_blocks` warns about add-on blocks whose plugin isn't active. `dump_all` stays core-only. The builder skill tells agents to treat add-on modules as equal candidates.
    - Files: `plugins/diviops-agent/includes/trait-module-schema.php`, `plugins/diviops-agent/includes/trait-validate.php`, `plugins/diviops-agent/README.md`, `plugins/diviops-agent/changelog.txt`, `skills/diviops-divi-5/SKILL.md`, `skills/diviops-divi-5/references/tools.md`
 2. **Fork packaging for the Agent**
    - Why: a WordPress.org release must not replace the fork build.
-   - What: version `1.5.50.1` (upstream version + `.1`), `Update URI: false`, a fork note in the description, and a fork changelog entry.
+   - What: version `1.5.52.1` (upstream version + `.1`), `Update URI: false`, a fork note in the description, and a fork changelog entry.
    - Files: `plugins/diviops-agent/diviops-agent.php`, `plugins/diviops-agent/readme.txt`, `plugins/diviops-agent/changelog.txt`
    - Bumping this version publishes a release (change 6).
 3. **schema_get_module description for bare add-on names**
@@ -29,7 +29,7 @@
    - Files: `.claude-plugin/plugin.json`, `README.md`, `diviops-server/package.json`, `diviops-server/.gitignore`, `diviops-server/bundle/diviops-mcp.mjs` (generated)
 5. **Fork identity at runtime**
    - Why: if upstream's `diviops` marketplace was added earlier, adding the fork under the same name fails, and the Visuals plugin needs the same update protection as the Agent.
-   - What: marketplace renamed to `jcs-diviops` (owner jmclaren7). Claude plugin version `1.4.16`, kept ahead of upstream's `1.4.15`. DiviOps Visuals (design library) is `1.0.0-beta.26.1` with `Update URI: false`. Plugin URI, plugin.json and package.json URLs point at the fork. `meta_wp_cli`'s WP_PATH hint no longer points users at the npm release.
+   - What: marketplace renamed to `jcs-diviops` (owner jmclaren7). Claude plugin version `1.4.20`, kept ahead of upstream's `1.4.19`. DiviOps Visuals (design library) is `1.0.0-beta.26.1` with `Update URI: false`. Plugin URI, plugin.json and package.json URLs point at the fork. `meta_wp_cli`'s WP_PATH hint no longer points users at the npm release.
    - Files: `.claude-plugin/marketplace.json`, `.claude-plugin/plugin.json`, `README.md`, `diviops-server/package.json`, `diviops-server/src/index.ts`, `plugins/diviops-agent/diviops-agent.php`, `plugins/diviops-design-library/diviops-design-library.php`
 6. **Plugin zips published as releases, not committed**
    - Why: committed zips go stale whenever the plugin sources change, and upstream rewrites them every release, so they conflicted on every rebase. The fork never used its copies of upstream's desktop skill zips (README and SETUP link to upstream's), and `diviops-divi-5-desktop.zip` lacked the fork's add-on section anyway.
@@ -45,4 +45,6 @@ The generated file `diviops-server/bundle/diviops-mcp.mjs` is never hand-merged.
 
 ## Undocumented changes
 
-No FORK.md existed before this rebase, so it was reconstructed from the commits since the merge-base (`e1a4d59`). No fork changes were found beyond the ones listed above.
+2026-11-27 rebase: the fork's diff from the merge-base (`407a9b0`) was checked against this file. Every change is listed above; none were undocumented.
+
+2026-11-11 rebase: no FORK.md existed then, so it was reconstructed from the commits since the merge-base (`e1a4d59`). No fork changes were found beyond the ones listed above.
